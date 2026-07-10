@@ -1,0 +1,17 @@
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# Runtime / données locales
+data/
+*.log
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
