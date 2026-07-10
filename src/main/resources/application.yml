@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: praxedo-upload-backend
+
+storage:
+  local:
+    base-dir: ${STORAGE_LOCAL_DIR:./data/uploads}
+  upload-url-ttl: PT15M
+  download-url-ttl: PT5M
+  public-base-url: ${PUBLIC_BASE_URL:http://localhost:8080}
+
+scan:
+  pending-ttl: PT1H
