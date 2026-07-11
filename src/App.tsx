@@ -68,8 +68,21 @@ export default function App() {
         </div>
       </main>
 
-      {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
-      {selected && <FileReportModal file={selected} onClose={() => setSelected(null)} />}
+      {uploadOpen && (
+        <UploadModal
+          onClose={() => setUploadOpen(false)}
+          onUploaded={(res) =>
+            showToast(
+              res.errors.length
+                ? `${res.errors.length} echec(s) a l'upload`
+                : `${res.done} fichier(s) reçu(s) — analyse en cours`,
+            )
+          }
+        />
+      )}
+      {selected && (
+        <FileReportModal file={selected} onClose={() => setSelected(null)} onToast={showToast} />
+      )}
       <Toast message={toast} />
     </div>
   );
