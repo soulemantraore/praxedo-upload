@@ -15,6 +15,13 @@ function isThreat(filename: string): boolean {
   return /eicar|virus|infected|malware/i.test(filename);
 }
 
+function genSha256(): string {
+  const h = '0123456789abcdef';
+  let s = '';
+  for (let i = 0; i < 64; i++) s += h[Math.floor(Math.random() * 16)];
+  return s;
+}
+
 export function resetStore(seed: Partial<StoreFile>[] = []): void {
   files = [];
   pollCount = 0;
@@ -35,6 +42,7 @@ function addSeed(s: Partial<StoreFile>): void {
     createdAt: s.createdAt ?? now(),
     updatedAt: s.updatedAt ?? now(),
     scannedAt: s.scannedAt ?? null,
+    sha256: s.sha256 ?? genSha256(),
     revealAtPoll: s.revealAtPoll ?? 0,
     uploaded: s.uploaded ?? true,
   });
@@ -54,6 +62,7 @@ export function register(input: { filename: string; contentType: string; size: n
     createdAt: now(),
     updatedAt: now(),
     scannedAt: null,
+    sha256: genSha256(),
     revealAtPoll: Number.MAX_SAFE_INTEGER,
     uploaded: false,
   });
@@ -152,5 +161,24 @@ function toView(f: StoreFile): FileView {
     createdAt: f.createdAt,
     updatedAt: f.updatedAt,
     scannedAt: f.scannedAt,
+    sha256: f.sha256,
   };
+}
+
+export function seedDemo(): void {
+  const base = Date.parse('2026-07-11T09:00:00Z');
+  const H = 3600_000;
+  const iso = (hoursAgo: number) => new Date(base - hoursAgo * H).toISOString();
+  const verdict = (v: 'CLEAN' | 'INFECTED' | null, threat: string | null, hoursAgo: number) =>
+    v ? { engine: 'Praxedo Secure Scan (ClamAV 1.3)', verdict: v, threatName: threat, scannedAt: iso(hoursAgo) } : null;
+  resetStore([
+    { filename: 'Rapport_intervention_2026-07.pdf', contentType: 'application/pdf', size: 4_830_000, status: 'CLEAN', createdAt: iso(2), scannedAt: iso(2), scanVerdict: verdict('CLEAN', null, 2) },
+    { filename: 'Export_clients_Q2.xlsx', contentType: 'application/vnd.ms-excel', size: 1_240_000, status: 'CLEAN', createdAt: iso(5), scannedAt: iso(5), scanVerdict: verdict('CLEAN', null, 5) },
+    { filename: 'Photos_chantier_Lyon.zip', contentType: 'application/zip', size: 88_400_000, status: 'SCANNING', createdAt: iso(26), revealAtPoll: Number.MAX_SAFE_INTEGER },
+    { filename: 'planning_equipes.csv', contentType: 'text/csv', size: 42_000, status: 'PENDING', createdAt: iso(27) },
+    { filename: 'archive_2019.exe', contentType: 'application/octet-stream', size: 12_600_000, status: 'INFECTED', createdAt: iso(30), scannedAt: iso(30), scanVerdict: verdict('INFECTED', 'Trojan.Win32.Agent.dx', 30) },
+    { filename: 'Facture_F2026-0912.pdf', contentType: 'application/pdf', size: 318_000, status: 'CLEAN', createdAt: iso(49), scannedAt: iso(49), scanVerdict: verdict('CLEAN', null, 49) },
+    { filename: 'Sauvegarde_base.sql', contentType: 'application/sql', size: 254_000_000, status: 'SCAN_FAILED', createdAt: iso(72) },
+    { filename: 'Manuel_technique_v3.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 2_870_000, status: 'CLEAN', createdAt: iso(96), scannedAt: iso(96), scanVerdict: verdict('CLEAN', null, 96) },
+  ]);
 }

@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw';
 import * as store from './store';
 
 export function makeWorker(apiBaseUrl: string) {
+  store.seedDemo();
   const B = apiBaseUrl;
   return setupWorker(
     http.get(`${B}/api/files/stats`, () => HttpResponse.json(store.stats())),

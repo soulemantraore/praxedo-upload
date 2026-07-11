@@ -19,6 +19,7 @@ export interface FileView {
   createdAt: string;            // ISO 8601
   updatedAt: string;
   scannedAt: string | null;
+  sha256?: string | null;       // empreinte SHA-256 (optionnel ; fourni si le backend le calcule)
 }
 
 export interface PageResult<T> {
