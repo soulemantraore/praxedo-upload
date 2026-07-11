@@ -1,0 +1,4 @@
+# Surcharge profil "test" (merge par-dessus application.yml) : stockage local dans un dossier temporaire.
+storage:
+  local:
+    base-dir: ${java.io.tmpdir}/praxedo-upload-test
