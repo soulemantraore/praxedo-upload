@@ -8,18 +8,38 @@ const base: FileView = {
   createdAt: '2026-07-11T09:00:00Z', updatedAt: '2026-07-11T09:00:00Z', scannedAt: null,
 };
 
+const noop = () => {};
+
+function renderTable(files: FileView[]) {
+  render(
+    <FileTable
+      files={files}
+      loading={false}
+      query=""
+      onSearch={noop}
+      page={0}
+      totalPages={1}
+      totalElements={files.length}
+      pageSize={6}
+      onPage={noop}
+      onView={noop}
+      onDownload={noop}
+    />,
+  );
+}
+
 test('bouton Telecharger seulement pour les fichiers CLEAN (invariant section 2)', () => {
-  render(<FileTable loading={false} files={[base, { ...base, id: 'f2', filename: 'v.exe', status: 'INFECTED' }]} onView={() => {}} onDownload={() => {}} />);
-  expect(screen.getByLabelText('Telecharger rapport.pdf')).toBeInTheDocument();
-  expect(screen.queryByLabelText('Telecharger v.exe')).not.toBeInTheDocument();
+  renderTable([base, { ...base, id: 'f2', filename: 'v.exe', status: 'INFECTED' }]);
+  expect(screen.getByLabelText('Télécharger rapport.pdf')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Télécharger v.exe')).not.toBeInTheDocument();
 });
 
-test('affiche taille et date formatees', () => {
-  render(<FileTable loading={false} files={[base]} onView={() => {}} onDownload={() => {}} />);
+test('affiche la taille formatee', () => {
+  renderTable([base]);
   expect(screen.getByText('2,4 Mo')).toBeInTheDocument();
 });
 
 test('etat vide', () => {
-  render(<FileTable loading={false} files={[]} onView={() => {}} onDownload={() => {}} />);
+  renderTable([]);
   expect(screen.getByText(/aucun fichier/i)).toBeInTheDocument();
 });

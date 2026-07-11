@@ -14,12 +14,12 @@ test('affiche l en-tete, les cartes et la liste seedee', async () => {
   renderApp();
   expect(screen.getByText(/mes fichiers/i)).toBeInTheDocument();
   await waitFor(() => expect(screen.getByText('rapport.pdf')).toBeInTheDocument());
-  expect(screen.getByLabelText('Telecharger rapport.pdf')).toBeInTheDocument();
+  expect(screen.getByLabelText('Télécharger rapport.pdf')).toBeInTheDocument();
 });
 
 test('ouvre la modale de depot', async () => {
   resetStore();
   renderApp();
-  await userEvent.click(screen.getByRole('button', { name: /deposer des fichiers/i }));
-  expect(screen.getByRole('dialog', { name: /deposer des fichiers/i })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /déposer un fichier/i }));
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
 });
