@@ -10,7 +10,7 @@ function renderApp() {
 }
 
 test('affiche l en-tete, les cartes et la liste seedee', async () => {
-  resetStore([{ filename: 'rapport.pdf', status: 'CLEAN', size: 2_400_000 }]);
+  resetStore([{ filename: 'rapport.pdf', status: 'CLEAN', sizeBytes: 2_400_000 }]);
   renderApp();
   expect(screen.getByText(/mes fichiers/i)).toBeInTheDocument();
   await waitFor(() => expect(screen.getByText('rapport.pdf')).toBeInTheDocument());

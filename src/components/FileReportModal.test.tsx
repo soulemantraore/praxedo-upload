@@ -4,9 +4,9 @@ import { FileReportModal } from './FileReportModal';
 import type { FileView } from '../api/types';
 
 const infected: FileView = {
-  id: 'f1', filename: 'eicar.txt', contentType: 'text/plain', size: 68, status: 'INFECTED',
-  batchId: null, scanVerdict: { engine: 'ClamAV', verdict: 'INFECTED', threatName: 'Trojan.Win32.Agent.dx', scannedAt: '2026-07-11T09:00:00Z' },
-  createdAt: '2026-07-11T09:00:00Z', updatedAt: '2026-07-11T09:00:00Z', scannedAt: '2026-07-11T09:00:00Z',
+  id: 'f1', filename: 'eicar.txt', contentType: 'text/plain', sizeBytes: 68, status: 'INFECTED',
+  infected: true, threatName: 'Trojan.Win32.Agent.dx',
+  createdAt: '2026-07-11T09:00:00Z', scannedAt: '2026-07-11T09:00:00Z',
 };
 
 function renderReport(file: FileView) {
@@ -22,11 +22,11 @@ test('affiche la menace et pas de bouton telecharger pour INFECTED', () => {
 });
 
 test('affiche telecharger pour CLEAN', () => {
-  renderReport({ ...infected, status: 'CLEAN', filename: 'ok.pdf', scanVerdict: { engine: 'ClamAV', verdict: 'CLEAN', threatName: null, scannedAt: '2026-07-11T09:00:00Z' } });
+  renderReport({ ...infected, status: 'CLEAN', filename: 'ok.pdf', infected: false, threatName: null });
   expect(screen.getByRole('button', { name: /télécharger/i })).toBeInTheDocument();
 });
 
 test('affiche relancer l analyse pour SCAN_FAILED', () => {
-  renderReport({ ...infected, status: 'SCAN_FAILED', filename: 'raté.bin', scanVerdict: null });
+  renderReport({ ...infected, status: 'SCAN_FAILED', filename: 'raté.bin', infected: false, threatName: null, scannedAt: null });
   expect(screen.getByRole('button', { name: /relancer l'analyse/i })).toBeInTheDocument();
 });

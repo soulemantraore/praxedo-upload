@@ -28,7 +28,7 @@ test('getStats envoie X-API-Key et parse le corps', async () => {
 
 test('listFiles serialise les parametres de requete', async () => {
   const { fn, calls } = fakeFetch(() =>
-    new Response(JSON.stringify({ items: [], page: 0, totalPages: 0, totalElements: 0 }),
+    new Response(JSON.stringify({ items: [], page: 0, size: 6, totalElements: 0 }),
       { status: 200, headers: { 'content-type': 'application/json' } }));
   const api = createFileApi(cfg, fn);
   await api.listFiles({ page: 1, size: 6, q: 'rap', status: 'CLEAN' });
@@ -40,9 +40,19 @@ test('listFiles serialise les parametres de requete', async () => {
   expect(u.searchParams.get('status')).toBe('CLEAN');
 });
 
+test('listFiles derive totalPages depuis totalElements et size', async () => {
+  const { fn } = fakeFetch(() =>
+    new Response(JSON.stringify({ items: [], page: 0, size: 6, totalElements: 13 }),
+      { status: 200, headers: { 'content-type': 'application/json' } }));
+  const api = createFileApi(cfg, fn);
+  const page = await api.listFiles({ page: 0, size: 6 });
+  expect(page.totalPages).toBe(3); // ceil(13 / 6)
+  expect(page.totalElements).toBe(13);
+});
+
 test('registerUpload POST le corps JSON', async () => {
   const { fn, calls } = fakeFetch(() =>
-    new Response(JSON.stringify({ id: 'f1', filename: 'a.pdf', status: 'PENDING', uploadUrl: 'http://up/f1', uploadExpiresAt: 'x' }),
+    new Response(JSON.stringify({ id: 'f1', status: 'PENDING', uploadUrl: 'http://up/f1', uploadExpiresAt: 'x' }),
       { status: 201, headers: { 'content-type': 'application/json' } }));
   const api = createFileApi(cfg, fn);
   const ticket = await api.registerUpload({ filename: 'a.pdf', contentType: 'application/pdf', size: 10 });

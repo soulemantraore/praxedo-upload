@@ -132,7 +132,7 @@ export function FileTable({
                 {f.filename}
               </div>
             </div>
-            <div style={{ fontSize: 12.5, color: '#667586', fontFamily: MONO }}>{formatBytes(f.size)}</div>
+            <div style={{ fontSize: 12.5, color: '#667586', fontFamily: MONO }}>{formatBytes(f.sizeBytes)}</div>
             <div style={{ fontSize: 12.5, color: '#667586' }}>{formatDateShort(f.createdAt)}</div>
             <div>
               <StatusBadge status={f.status} />

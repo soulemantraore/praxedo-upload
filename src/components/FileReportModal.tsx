@@ -9,6 +9,10 @@ interface Props {
   onToast?: (msg: string) => void;
 }
 
+// Le backend n'expose pas le moteur par fichier : l'antivirus est ClamAV
+// (fixe par l'architecture de deploiement). Affiche uniquement si une analyse a abouti.
+const SCAN_ENGINE = 'ClamAV';
+
 interface VerdictConf {
   border: string;
   bg: string;
@@ -101,7 +105,7 @@ export function FileReportModal({ file, onClose, onToast }: Props) {
 
   const threatValue =
     status === 'INFECTED'
-      ? file.scanVerdict?.threatName ?? 'inconnue'
+      ? file.threatName ?? 'inconnue'
       : scanningState ? '—' : 'Aucune';
   const threatColor = status === 'INFECTED' ? '#B23B30' : '#16232F';
 
@@ -186,7 +190,7 @@ export function FileReportModal({ file, onClose, onToast }: Props) {
                 {file.filename}
               </div>
               <div style={{ fontSize: 12.5, color: '#667586', marginTop: 2, fontFamily: "'IBM Plex Mono',monospace" }}>
-                {formatBytes(file.size)} · {formatDateLong(file.createdAt)}
+                {formatBytes(file.sizeBytes)} · {formatDateLong(file.createdAt)}
               </div>
             </div>
           </div>
@@ -228,23 +232,9 @@ export function FileReportModal({ file, onClose, onToast }: Props) {
 
             {/* Metadata card */}
             <div style={{ background: '#fff', border: '1px solid #E1E7EE', borderRadius: 12, padding: '4px 18px' }}>
-              {metaRow('Moteur antivirus', file.scanVerdict?.engine ?? '—', '#16232F')}
-              {metaRow('Base de signatures', '—', '#16232F')}
-              {metaRow("Durée d'analyse", '—', '#16232F')}
+              {metaRow('Moteur antivirus', file.scannedAt ? SCAN_ENGINE : '—', '#16232F')}
               {metaRow('Menace détectée', threatValue, threatColor, true)}
             </div>
-
-            {/* SHA-256 card */}
-            {file.sha256 && (
-              <div style={{ background: '#F7F9FB', border: '1px solid #EEF2F6', borderRadius: 12, padding: '14px 16px' }}>
-                <div style={{ fontSize: 11, color: '#667586', marginBottom: 5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em' }}>
-                  Empreinte SHA-256
-                </div>
-                <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, lineHeight: 1.6, color: '#16232F', wordBreak: 'break-all' }}>
-                  {file.sha256}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* RIGHT */}

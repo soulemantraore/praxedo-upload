@@ -46,15 +46,21 @@ export function createFileApi(config: AppConfig, fetchImpl: typeof fetch = fetch
   return {
     getStats: () => request<StatsView>('/api/files/stats'),
 
-    listFiles: (query) => {
+    listFiles: async (query) => {
       const p = new URLSearchParams();
       if (query.page != null) p.set('page', String(query.page));
       if (query.size != null) p.set('size', String(query.size));
       if (query.q) p.set('q', query.q);
       if (query.status) p.set('status', query.status);
-      if (query.batchId) p.set('batchId', query.batchId);
       const qs = p.toString();
-      return request<PageResult<FileView>>(`/api/files${qs ? `?${qs}` : ''}`);
+      const raw = await request<Omit<PageResult<FileView>, 'totalPages'>>(
+        `/api/files${qs ? `?${qs}` : ''}`,
+      );
+      // Le backend ne garantit pas `totalPages` dans le JSON : on le derive ici
+      // a partir du nombre total d'elements et de la taille de page effective.
+      const size = raw.size || query.size || raw.items.length || 1;
+      const totalPages = Math.max(1, Math.ceil(raw.totalElements / size));
+      return { ...raw, totalPages };
     },
 
     getFile: (id) => request<FileView>(`/api/files/${encodeURIComponent(id)}`),

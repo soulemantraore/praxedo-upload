@@ -24,7 +24,8 @@ test('un fichier eicar finit INFECTED et le download renvoie 403', async () => {
   await api.listFiles({ page: 0, size: 6 });
   const f = await api.getFile(t.id);
   expect(f.status).toBe('INFECTED');
-  expect(f.scanVerdict?.threatName).toBe('Eicar-Test-Signature');
+  expect(f.infected).toBe(true);
+  expect(f.threatName).toBe('Eicar-Test-Signature');
   await expect(api.downloadFile(t.id, 'eicar.txt')).rejects.toMatchObject({ status: 403 });
 });
 

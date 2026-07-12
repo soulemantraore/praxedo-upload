@@ -1,32 +1,28 @@
 export type FileStatus =
   | 'PENDING' | 'SCANNING' | 'CLEAN' | 'INFECTED' | 'SCAN_FAILED' | 'EXPIRED';
 
-export interface ScanVerdict {
-  engine: string | null;
-  verdict: 'CLEAN' | 'INFECTED' | null;
-  threatName: string | null;
-  scannedAt: string | null;
-}
-
+// Forme exacte renvoyee par le backend (application/dto/FileViews.FileView) :
+// le verdict d'analyse est aplati en `infected` + `threatName` (pas d'objet imbrique).
 export interface FileView {
   id: string;
   filename: string;
   contentType: string;
-  size: number;                 // octets
+  sizeBytes: number;            // octets
   status: FileStatus;
-  batchId: string | null;
-  scanVerdict: ScanVerdict | null;
+  infected: boolean;
+  threatName: string | null;
   createdAt: string;            // ISO 8601
-  updatedAt: string;
-  scannedAt: string | null;
-  sha256?: string | null;       // empreinte SHA-256 (optionnel ; fourni si le backend le calcule)
+  scannedAt: string | null;     // null tant qu'aucune analyse n'a abouti
 }
 
+// Le backend serialise { items, page, size, totalElements } (domain/file/PageResult).
+// `totalPages` est derive cote client (le backend ne le garantit pas dans le JSON).
 export interface PageResult<T> {
   items: T[];
   page: number;
-  totalPages: number;
+  size: number;
   totalElements: number;
+  totalPages: number;
 }
 
 export interface StatsView {
@@ -37,9 +33,10 @@ export interface StatsView {
   blocked: number;
 }
 
+// Reponse de POST /api/files (application/dto/UploadCommands.UploadRegistration).
+// Pas de `filename` : le client garde le nom du fichier localement.
 export interface UploadTicket {
   id: string;
-  filename: string;
   status: FileStatus;
   uploadUrl: string;
   uploadExpiresAt: string;
@@ -50,5 +47,4 @@ export interface FileQuery {
   size?: number;
   q?: string;
   status?: FileStatus | '';
-  batchId?: string;
 }

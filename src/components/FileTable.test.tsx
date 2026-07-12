@@ -3,9 +3,9 @@ import { FileTable } from './FileTable';
 import type { FileView } from '../api/types';
 
 const base: FileView = {
-  id: 'f1', filename: 'rapport.pdf', contentType: 'application/pdf', size: 2_400_000,
-  status: 'CLEAN', batchId: null, scanVerdict: null,
-  createdAt: '2026-07-11T09:00:00Z', updatedAt: '2026-07-11T09:00:00Z', scannedAt: null,
+  id: 'f1', filename: 'rapport.pdf', contentType: 'application/pdf', sizeBytes: 2_400_000,
+  status: 'CLEAN', infected: false, threatName: null,
+  createdAt: '2026-07-11T09:00:00Z', scannedAt: null,
 };
 
 const noop = () => {};
