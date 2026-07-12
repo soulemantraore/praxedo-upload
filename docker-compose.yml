@@ -1,0 +1,21 @@
+# Infra locale pour experimenter le flux reel (profil gcp) : ClamAV + emulateur Pub/Sub.
+# Pour le dev courant, prefere le profil "local" (adapters fake, sans Docker).
+#
+#   docker compose up -d
+#   JAVA_HOME=<jdk-21> mvn spring-boot:run -Dspring-boot.run.profiles=gcp   (jalon 3 : + GCS/Cloud SQL)
+#
+# NB : les tests d'integration (ClamAV) demarrent leurs propres conteneurs via Testcontainers ;
+# ce compose sert a lancer l'app manuellement contre une infra reelle.
+services:
+  clamav:
+    # Image multi-arch (inclut arm64) ; l'image clamav/clamav par defaut est amd64 seulement.
+    image: clamav/clamav-debian:latest
+    ports:
+      - "3310:3310"
+
+  pubsub-emulator:
+    # Emulateur Pub/Sub (composant du Cloud SDK). Utile pour tester le transport sans vrai GCP.
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk:latest
+    command: gcloud beta emulators pubsub start --project=praxedo-upload --host-port=0.0.0.0:8085
+    ports:
+      - "8085:8085"

@@ -1,0 +1,10 @@
+# Profil "gcp" : adapters reels (ClamAV via clamd, transport Pub/Sub).
+# Charge uniquement quand le profil gcp est actif. GCS + Cloud SQL arrivent au jalon 3
+# (le profil gcp n'est donc pas encore entierement demarrable seul).
+clamav:
+  host: ${CLAMAV_HOST:localhost}
+  port: ${CLAMAV_PORT:3310}
+
+pubsub:
+  project-id: ${GCP_PROJECT_ID:praxedo-upload}
+  scan-topic: ${PUBSUB_SCAN_TOPIC:scan-requests}

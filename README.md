@@ -22,8 +22,24 @@ domain (FileRecord + machine à états, ports/interfaces, value objects)   ← n
 Le domaine ne connaît ni Spring, ni GCS, ni ClamAV : il ne dépend que de **ports** (`FileStorage`, `FileMetadataRepository`, `AntivirusScanner`, `ScanQueue`, `ApiClientRepository`, `IdGenerator`). Les adapters sont choisis par **profil Spring**.
 
 ### Profils
-- **`local` / `test`** (ce jalon) : adapters in-memory (repos), filesystem (`LocalFileStorage` + proxy HTTP simulant GCS), `FakeAntivirusScanner` (détecte la signature de test **EICAR**), scan en process. Tourne **sans aucune dépendance GCP**.
-- **`gcp`** (jalons suivants) : `GcsFileStorage` (URLs signées), JPA/Cloud SQL, ClamAV réel, Pub/Sub.
+- **`local` / `test`** : adapters in-memory (repos), filesystem (`LocalFileStorage` + proxy HTTP simulant GCS), `FakeAntivirusScanner` (détecte la signature de test **EICAR**), scan en process. Tourne **sans aucune dépendance GCP**.
+- **`gcp`** : adapters réels. **Jalon 2 (fait)** : `ClamavScanner` (clamd réel), `PubSubScanQueue` + endpoint push `/internal/scan-events`. **Jalon 3 (à venir)** : `GcsFileStorage` (URLs signées V4), JPA/Cloud SQL. Le profil gcp n'est donc pas encore entièrement démarrable seul (il manque storage + DB).
+
+### Flux réel (profil gcp)
+```
+Client → GCS (upload direct, URL signée)
+GCS "object finalize" → Pub/Sub → push /internal/scan-events → scan-worker
+   scan-worker lit GCS → clamd (sidecar, localhost) → écrit le statut (Cloud SQL)
+Client → GET /content : URL signée de download uniquement si CLEAN
+```
+`clamd` n'est jamais dans notre code : c'est l'image officielle **co-localisée en sidecar** ; le worker l'appelle via le port `AntivirusScanner`.
+
+### Infra réelle en local (optionnel)
+`docker-compose.yml` lance **ClamAV** + un **émulateur Pub/Sub** pour expérimenter le flux réel :
+```bash
+docker compose up -d
+```
+(Les tests d'intégration ClamAV démarrent leur propre conteneur via Testcontainers — pas besoin de ce compose pour `mvn test`.)
 
 ### Cycle de vie d'un fichier
 ```
