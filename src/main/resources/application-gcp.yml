@@ -1,4 +1,8 @@
-# Profil "gcp" : adapters reels (ClamAV, Pub/Sub, JPA/Cloud SQL). GCS arrive dans la meme serie de PR.
+# Profil "gcp" : adapters reels (ClamAV, Pub/Sub, JPA/Cloud SQL, GCS).
+storage:
+  gcs:
+    bucket: ${GCS_BUCKET:praxedo-upload-files}
+
 spring:
   # Reactive base/JPA/Flyway (l'application.yml les exclut par defaut pour local/test).
   autoconfigure:
