@@ -23,6 +23,9 @@ public interface FileMetadataRepository {
     /** Acces interne (worker), non scope owner. */
     Optional<FileRecord> findById(UUID id);
 
+    /** Resolution par cle de stockage (utilisee par la notification GCS -> scan). */
+    Optional<FileRecord> findByStorageKey(String storageKey);
+
     /** Acces owner-scope : ne renvoie le fichier que s'il appartient a l'owner. */
     Optional<FileRecord> findByIdAndOwner(UUID id, UUID ownerId);
 

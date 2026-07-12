@@ -31,6 +31,11 @@ public class InMemoryFileMetadataRepository implements FileMetadataRepository {
     }
 
     @Override
+    public Optional<FileRecord> findByStorageKey(String storageKey) {
+        return store.values().stream().filter(f -> f.storageKey().equals(storageKey)).findFirst();
+    }
+
+    @Override
     public Optional<FileRecord> findByIdAndOwner(UUID id, UUID ownerId) {
         return findById(id).filter(f -> f.ownerId().equals(ownerId));
     }

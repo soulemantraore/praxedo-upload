@@ -1,6 +1,19 @@
-# Profil "gcp" : adapters reels (ClamAV via clamd, transport Pub/Sub).
-# Charge uniquement quand le profil gcp est actif. GCS + Cloud SQL arrivent au jalon 3
-# (le profil gcp n'est donc pas encore entierement demarrable seul).
+# Profil "gcp" : adapters reels (ClamAV, Pub/Sub, JPA/Cloud SQL). GCS arrive dans la meme serie de PR.
+spring:
+  # Reactive base/JPA/Flyway (l'application.yml les exclut par defaut pour local/test).
+  autoconfigure:
+    exclude:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/praxedo}
+    username: ${DB_USER:praxedo}
+    password: ${DB_PASSWORD:praxedo}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  flyway:
+    enabled: true
+
 clamav:
   host: ${CLAMAV_HOST:localhost}
   port: ${CLAMAV_PORT:3310}

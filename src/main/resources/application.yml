@@ -1,6 +1,14 @@
 spring:
   application:
     name: praxedo-upload-backend
+  # Base/JPA/Flyway desactives par defaut (profils local/test = repos in-memory, sans base).
+  # Le profil gcp vide cette liste (application-gcp.yml) pour les reactiver.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
 
 storage:
   local:
