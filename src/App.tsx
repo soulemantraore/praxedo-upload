@@ -39,12 +39,7 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh' }}>
-      <Header
-        portalName={config.portalName}
-        clientName={config.clientName}
-        clientOrg={config.clientOrg}
-        onOpenUpload={() => setUploadOpen(true)}
-      />
+      <Header portalName={config.portalName} onOpenUpload={() => setUploadOpen(true)} />
       <main style={{ maxWidth: 1080, margin: '0 auto', padding: 28, animation: 'fadeUp .3s ease both' }}>
         <StatCards stats={stats.data} />
         <FileTable

@@ -1,21 +1,9 @@
 interface HeaderProps {
   portalName: string;
-  clientName: string;
-  clientOrg: string;
   onOpenUpload: () => void;
 }
 
-function initials(name: string): string {
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0] ?? '')
-    .join('')
-    .toUpperCase();
-}
-
-export function Header({ portalName, clientName, clientOrg, onOpenUpload }: HeaderProps) {
+export function Header({ portalName, onOpenUpload }: HeaderProps) {
   return (
     <header style={{ background: '#fff', borderBottom: '1px solid #E1E7EE' }}>
       <div
@@ -52,61 +40,29 @@ export function Header({ portalName, clientName, clientOrg, onOpenUpload }: Head
             <div style={{ fontSize: 11.5, color: '#8A96A4', fontWeight: 500 }}>Fichiers sécurisés</div>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <button
-            onClick={onOpenUpload}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              background: '#005EA8',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 9,
-              padding: '10px 18px',
-              font: 'inherit',
-              fontSize: 13.5,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 5v14" />
-              <path d="M5 12h14" />
-            </svg>
-            Déposer un fichier
-          </button>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 9,
-              paddingLeft: 14,
-              borderLeft: '1px solid #E1E7EE',
-            }}
-          >
-            <div
-              style={{
-                width: 34,
-                height: 34,
-                borderRadius: '50%',
-                background: '#005EA8',
-                color: '#fff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
-              {initials(clientName)}
-            </div>
-            <div style={{ lineHeight: 1.15 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#16232F' }}>{clientName}</div>
-              <div style={{ fontSize: 11, color: '#8A96A4' }}>{clientOrg}</div>
-            </div>
-          </div>
-        </div>
+        <button
+          onClick={onOpenUpload}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            background: '#005EA8',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 9,
+            padding: '10px 18px',
+            font: 'inherit',
+            fontSize: 13.5,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5v14" />
+            <path d="M5 12h14" />
+          </svg>
+          Déposer un fichier
+        </button>
       </div>
     </header>
   );

@@ -3,7 +3,7 @@ import type { AppConfig } from '../config';
 
 const cfg: AppConfig = {
   apiBaseUrl: 'http://api.test', apiKey: 'secret',
-  portalName: 'P', clientName: 'C', clientOrg: 'O', useMock: false, pollIntervalMs: 1000,
+  portalName: 'P', useMock: false, pollIntervalMs: 1000,
 };
 
 function fakeFetch(handler: (url: string, init?: RequestInit) => Response) {

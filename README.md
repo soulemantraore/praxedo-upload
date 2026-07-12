@@ -102,8 +102,6 @@ Toutes les variables sont documentées avec leur valeur par défaut dans `.env.e
 | `VITE_API_BASE_URL` | URL de base de l'API backend (sans slash final). | `http://localhost:8080` |
 | `VITE_API_KEY` | Clé API du client, envoyée dans l'en-tête `X-API-Key`. À injecter au build/déploiement en production, jamais commitée. | `dev-local-key` |
 | `VITE_PORTAL_NAME` | Nom du portail affiché dans l'en-tête de l'application. | `Praxedo` |
-| `VITE_CLIENT_NAME` | Nom de l'utilisateur connecté affiché dans l'en-tête (donnée de démo). | `Marie Colin` |
-| `VITE_CLIENT_ORG` | Organisation de l'utilisateur connecté affichée dans l'en-tête (donnée de démo). | `Bâtir SA` |
 | `VITE_USE_MOCK` | `true` : démarre le faux backend MSW dans le navigateur (démo hors ligne). `false` : appelle le vrai backend. | `true` |
 | `VITE_POLL_MS` | Intervalle (ms) du polling de statut tant qu'un fichier n'a pas de statut final. | `2500` |
 
@@ -123,10 +121,8 @@ Toutes les variables sont documentées avec leur valeur par défaut dans `.env.e
   directement depuis GCS, déchargeant ainsi le backend (et cette UI) du relais des
   gros fichiers — cohérent avec le principe « l'application ne relaie jamais les gros
   fichiers ».
-- **Identité client dans l'en-tête** (`VITE_CLIENT_NAME` / `VITE_CLIENT_ORG`) : donnée
-  de démo reflétant la maquette. L'authentification réelle est machine-à-machine par
-  `X-API-Key` ; une authentification humaine OAuth2/JWT est une évolution documentée
-  (spec sections 8 et 13).
+- **Authentification** : machine-à-machine par `X-API-Key` ; une authentification
+  humaine OAuth2/JWT est une évolution documentée (spec sections 8 et 13).
 - **Modale de détail** : affiche le SHA-256 quand le backend le fournit (le mock de
   démo en génère un) ; « Base de signatures » et « Durée d'analyse » affichent un tiret
   quand le backend ne les fournit pas. La barre de progression du scan est

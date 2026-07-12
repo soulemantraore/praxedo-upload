@@ -2,7 +2,7 @@ import { createFileApi } from '../../src/api/client';
 import type { AppConfig } from '../../src/config';
 import { resetStore } from './store';
 
-const cfg: AppConfig = { apiBaseUrl: 'http://api.test', apiKey: 'k', portalName: 'P', clientName: 'C', clientOrg: 'O', useMock: true, pollIntervalMs: 10 };
+const cfg: AppConfig = { apiBaseUrl: 'http://api.test', apiKey: 'k', portalName: 'P', useMock: true, pollIntervalMs: 10 };
 const api = createFileApi(cfg);
 
 test('cycle complet : register -> upload -> SCANNING -> CLEAN', async () => {
