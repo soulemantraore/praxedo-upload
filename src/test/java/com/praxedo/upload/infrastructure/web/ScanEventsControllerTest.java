@@ -71,4 +71,43 @@ class ScanEventsControllerTest {
         mvc.perform(post("/internal/scan-events").contentType("application/json").content(pushBody))
             .andExpect(status().isNoContent());
     }
+
+    @Test
+    void gcs_object_finalize_notification_triggers_scan() throws Exception {
+        String body = "{\"filename\":\"ok.txt\",\"contentType\":\"text/plain\",\"size\":5}";
+        JsonNode created = json.readTree(mvc.perform(post("/api/files").header("X-API-Key", key)
+                .contentType("application/json").content(body))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        String id = created.get("id").asText();
+        String uploadUrl = created.get("uploadUrl").asText();
+        String storageKey = URLDecoder.decode(
+            uploadUrl.substring(uploadUrl.indexOf("key=") + 4), StandardCharsets.UTF_8);
+        mvc.perform(put("/api/_local/upload").param("key", storageKey).content("hello"))
+            .andExpect(status().isOk());
+
+        // Notification GCS "object finalize" : objectId = storageKey
+        String pushBody = "{\"message\":{\"attributes\":{\"objectId\":\"" + storageKey
+            + "\",\"eventType\":\"OBJECT_FINALIZE\"},\"messageId\":\"m1\"}}";
+        mvc.perform(post("/internal/scan-events").contentType("application/json").content(pushBody))
+            .andExpect(status().isNoContent());
+
+        mvc.perform(get("/api/files/" + id).header("X-API-Key", key))
+            .andExpect(jsonPath("$.status").value("CLEAN"));
+    }
+
+    @Test
+    void gcs_non_finalize_event_is_ignored() throws Exception {
+        String pushBody = "{\"message\":{\"attributes\":{\"objectId\":\"owner/x/a.txt\","
+            + "\"eventType\":\"OBJECT_DELETE\"}}}";
+        mvc.perform(post("/internal/scan-events").contentType("application/json").content(pushBody))
+            .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void gcs_unknown_object_is_acked() throws Exception {
+        String pushBody = "{\"message\":{\"attributes\":{\"objectId\":\"owner/unknown/z.txt\","
+            + "\"eventType\":\"OBJECT_FINALIZE\"}}}";
+        mvc.perform(post("/internal/scan-events").contentType("application/json").content(pushBody))
+            .andExpect(status().isNoContent());
+    }
 }
