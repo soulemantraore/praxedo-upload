@@ -1,0 +1,122 @@
+# =====================================================================
+# Cloud Run service: praxedo-worker
+# Three containers:
+#   - app             : the Spring Boot application (profile gcp).
+#                       Receives the Pub/Sub push at /internal/scan-events,
+#                       reads the object from GCS, scans it via clamd, writes
+#                       the verdict to Cloud SQL.
+#   - clamav          : ClamAV daemon (clamd) on 127.0.0.1:3310. Loads a large
+#                       signature database at startup -> min-instances=1, 2Gi.
+#   - cloud-sql-proxy : Cloud SQL Auth Proxy, Postgres on localhost:5432.
+#
+# The worker is NOT public: ingress is open so Pub/Sub can reach it over the
+# internet, but only the push subscription's service account is granted
+# run.invoker (OIDC token). See deploy/README.md.
+#
+# Rendered by "make deploy-worker" via envsubst, applied with
+# "gcloud run services replace". Placeholders: ${...}.
+#
+# Resource note: Cloud Run bills the SUM of all container limits. Here that is
+# 4 vCPU / 4Gi (app 1/1Gi + clamav 2/2Gi + proxy 1/1Gi), a valid instance size.
+# Tune down if your signature set is smaller.
+# =====================================================================
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ${WORKER_SERVICE}
+  labels:
+    app: praxedo-upload
+    component: worker
+  annotations:
+    run.googleapis.com/launch-stage: GA
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        # Keep one warm instance: reloading the ClamAV DB on every cold start
+        # would make scans slow and expensive.
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "5"
+        # CPU always allocated (background scan work, warm sidecars).
+        run.googleapis.com/cpu-throttling: "false"
+        # Start the app only once both sidecars report healthy.
+        run.googleapis.com/container-dependencies: '{"app":["clamav","cloud-sql-proxy"]}'
+    spec:
+      serviceAccountName: ${WORKER_SA}
+      # Scans of large files can be slow; give the push request a wide budget.
+      timeoutSeconds: 600
+      containers:
+        # ---- Ingress container: the application ----
+        - name: app
+          image: ${IMAGE_URI}
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: gcp
+            - name: SERVER_PORT
+              value: "8080"
+            - name: GCP_PROJECT_ID
+              value: ${GCP_PROJECT_ID}
+            - name: GCS_BUCKET
+              value: ${GCS_BUCKET}
+            - name: PUBSUB_SCAN_TOPIC
+              value: ${PUBSUB_SCAN_TOPIC}
+            - name: CLAMAV_HOST
+              value: "127.0.0.1"
+            - name: CLAMAV_PORT
+              value: "3310"
+            - name: DB_URL
+              value: jdbc:postgresql://127.0.0.1:5432/${DB_NAME}
+            - name: DB_USER
+              value: ${DB_USER}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${DB_SECRET_NAME}
+                  key: latest
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 30
+        # ---- Sidecar: ClamAV daemon (clamd on 127.0.0.1:3310) ----
+        - name: clamav
+          image: ${CLAMAV_IMAGE}
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          # clamd only starts listening once the signature DB is loaded; give it
+          # generous time (up to ~10 min on a fresh freshclam download).
+          startupProbe:
+            tcpSocket:
+              port: 3310
+            periodSeconds: 15
+            failureThreshold: 40
+        # ---- Sidecar: Cloud SQL Auth Proxy (localhost:5432) ----
+        - name: cloud-sql-proxy
+          image: ${PROXY_IMAGE}
+          args:
+            - "--port=5432"
+            - "--address=127.0.0.1"
+            - "${SQL_CONNECTION_NAME}"
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            tcpSocket:
+              port: 5432
+            periodSeconds: 10
+            failureThreshold: 30

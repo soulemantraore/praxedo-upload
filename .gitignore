@@ -15,3 +15,6 @@ data/
 *.iws
 *.ipr
 .vscode/
+
+# Deploy: fichiers rendus par le Makefile (envsubst / CORS)
+deploy/.*.rendered.*
