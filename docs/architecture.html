@@ -1,0 +1,757 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Architecture - praxedo-upload-backend</title>
+<style>
+  /* ---------- Tokens ---------- */
+  :root {
+    --ground:      #F6F8FB;
+    --surface:     #FFFFFF;
+    --surface-2:   #FCFDFE;
+    --ink:         #15232F;
+    --ink-soft:    #33475A;
+    --muted:       #5D7085;
+    --faint:       #8698A9;
+    --line:        #E2E8EF;
+    --line-strong: #CDD8E2;
+    --accent:      #005EA8;
+    --accent-deep: #084A80;
+    --accent-wash: #E9F1F9;
+    --domain:      #4B3F8F;      /* coeur du domaine : indigo, distinct du bleu structurel */
+    --domain-wash: #EEEBF7;
+    --domain-line: #D4CBEC;
+    --clean:       #1F8A4C;
+    --clean-wash:  #E7F5EC;
+    --infected:    #C0392B;
+    --infected-wash:#FBECEA;
+    --pending:     #B0771A;
+    --pending-wash:#FAF2E1;
+
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 1px 2px rgba(21,35,47,.04), 0 8px 24px rgba(21,35,47,.05);
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:      #0D151E;
+      --surface:     #141F2B;
+      --surface-2:   #101924;
+      --ink:         #E7EEF4;
+      --ink-soft:    #C2CFDA;
+      --muted:       #93A4B5;
+      --faint:       #6D8093;
+      --line:        #253340;
+      --line-strong: #33475A;
+      --accent:      #57A9E8;
+      --accent-deep: #8CC5F1;
+      --accent-wash: #142838;
+      --domain:      #A99CE6;
+      --domain-wash: #1E1B35;
+      --domain-line: #362F55;
+      --clean:       #56C989;
+      --clean-wash:  #123322;
+      --infected:    #E8776B;
+      --infected-wash:#331917;
+      --pending:     #E0B15E;
+      --pending-wash:#332815;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"] {
+    --ground:#F6F8FB; --surface:#FFFFFF; --surface-2:#FCFDFE; --ink:#15232F; --ink-soft:#33475A;
+    --muted:#5D7085; --faint:#8698A9; --line:#E2E8EF; --line-strong:#CDD8E2;
+    --accent:#005EA8; --accent-deep:#084A80; --accent-wash:#E9F1F9;
+    --domain:#4B3F8F; --domain-wash:#EEEBF7; --domain-line:#D4CBEC;
+    --clean:#1F8A4C; --clean-wash:#E7F5EC; --infected:#C0392B; --infected-wash:#FBECEA;
+    --pending:#B0771A; --pending-wash:#FAF2E1;
+    --shadow:0 1px 2px rgba(21,35,47,.04), 0 8px 24px rgba(21,35,47,.05);
+  }
+  :root[data-theme="dark"] {
+    --ground:#0D151E; --surface:#141F2B; --surface-2:#101924; --ink:#E7EEF4; --ink-soft:#C2CFDA;
+    --muted:#93A4B5; --faint:#6D8093; --line:#253340; --line-strong:#33475A;
+    --accent:#57A9E8; --accent-deep:#8CC5F1; --accent-wash:#142838;
+    --domain:#A99CE6; --domain-wash:#1E1B35; --domain-line:#362F55;
+    --clean:#56C989; --clean-wash:#123322; --infected:#E8776B; --infected-wash:#331917;
+    --pending:#E0B15E; --pending-wash:#332815;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  /* ---------- Reset-ish ---------- */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3, h4 { margin: 0; line-height: 1.18; text-wrap: balance; letter-spacing: -.015em; }
+  p { margin: 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: var(--mono); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  /* ---------- Layout ---------- */
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+  main { padding-bottom: 96px; }
+  .section { padding: 40px 0; border-top: 1px solid var(--line); }
+  .section:first-of-type { border-top: none; }
+  .prose { max-width: 68ch; }
+  .prose p + p { margin-top: 14px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 14px;
+  }
+  .eyebrow .rule { height: 1px; flex: 1; background: var(--line); }
+  h2.title { font-size: clamp(22px, 3.2vw, 30px); font-weight: 800; }
+  .lead { color: var(--muted); font-size: 16.5px; margin-top: 12px; }
+
+  /* ---------- Header ---------- */
+  header.top {
+    background:
+      radial-gradient(1100px 340px at 82% -14%, var(--accent-wash), transparent 62%),
+      var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .top-inner { padding: 30px 0 34px; display: flex; flex-direction: column; gap: 20px; }
+  .top-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+  .kicker { font-family: var(--mono); font-size: 12.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  h1.doc-title { font-size: clamp(28px, 5vw, 44px); font-weight: 850; margin-top: 8px; letter-spacing: -.025em; }
+  h1.doc-title .repo { font-family: var(--mono); font-weight: 700; font-size: .58em; color: var(--accent); letter-spacing: -.01em; display: block; margin-top: 10px; }
+  .invariant {
+    margin-top: 6px; max-width: 62ch; font-size: 17px; color: var(--ink-soft);
+    border-left: 3px solid var(--clean); padding-left: 16px;
+  }
+  .invariant b { color: var(--clean); font-weight: 700; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .01em;
+    color: var(--ink-soft); background: var(--surface-2);
+    border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 11px;
+    white-space: nowrap;
+  }
+
+  .toggle {
+    font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .05em;
+    color: var(--muted); background: var(--surface); border: 1px solid var(--line-strong);
+    border-radius: 999px; padding: 7px 13px; cursor: pointer; display: inline-flex; gap: 7px; align-items: center;
+  }
+  .toggle:hover { color: var(--ink); border-color: var(--accent); }
+
+  /* ---------- Generic cards ---------- */
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 20px; box-shadow: var(--shadow);
+  }
+
+  /* ---------- Diagram shell ---------- */
+  .figure {
+    background:
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 26px,
+      var(--surface);
+    background-blend-mode: normal;
+    border: 1px solid var(--line-strong); border-radius: var(--radius);
+    padding: 22px; overflow-x: auto; box-shadow: var(--shadow);
+  }
+  .figcap { font-size: 13px; color: var(--faint); margin-top: 10px; font-family: var(--mono); letter-spacing: .02em; }
+
+  /* nodes */
+  .node {
+    border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+    background: var(--surface-2); padding: 11px 13px; min-width: 0;
+  }
+  .node .n-label { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  .node .n-title { font-weight: 700; font-size: 14.5px; margin-top: 3px; }
+  .node .n-sub { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+  .tag { font-family: var(--mono); font-size: 11.5px; padding: 3px 8px; border-radius: 6px; background: var(--accent-wash); color: var(--accent-deep); border: 1px solid transparent; white-space: nowrap; }
+
+  /* ---------- Hexagonal layered diagram ---------- */
+  .hex { display: flex; flex-direction: column; gap: 14px; min-width: 640px; }
+  .band { border-radius: var(--radius); padding: 14px; border: 1px dashed var(--line-strong); background: var(--surface-2); }
+  .band > .band-h { font-family: var(--mono); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-bottom: 11px; display:flex; align-items:center; gap:8px; }
+  .band .grid { display: grid; gap: 10px; }
+  .g-web { grid-template-columns: repeat(4, 1fr); }
+  .g-app { grid-template-columns: repeat(3, 1fr); }
+  .g-2   { grid-template-columns: 1fr 1fr; }
+
+  .band.core { border-style: solid; border-color: var(--domain-line); background: var(--domain-wash); }
+  .band.core > .band-h { color: var(--domain); }
+  .core .domain-objs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .obj { font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 7px; background: var(--surface); border: 1px solid var(--domain-line); color: var(--domain); }
+  .ports-h { font-family: var(--mono); font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 4px 0 8px; font-weight: 700; }
+  .ports { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .port { font-family: var(--mono); font-size: 12.5px; font-weight: 600; text-align: center; padding: 8px 6px; border-radius: 7px; background: var(--surface); border: 1px solid var(--accent); color: var(--accent-deep); }
+
+  .adapters { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .adcol { border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 13px; background: var(--surface); }
+  .adcol.dev  { border-top: 3px solid var(--pending); }
+  .adcol.prod { border-top: 3px solid var(--accent); }
+  .adcol h4 { font-size: 13px; font-family: var(--mono); letter-spacing: .04em; margin-bottom: 3px; }
+  .adcol .who { font-size: 12px; color: var(--muted); margin-bottom: 11px; }
+  .maprow { display: grid; grid-template-columns: 1fr; gap: 7px; }
+  .impl { font-family: var(--mono); font-size: 12px; padding: 7px 9px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-soft); }
+  .impl b { color: var(--ink); font-weight: 700; }
+
+  .flowhint { text-align: center; font-family: var(--mono); font-size: 11.5px; color: var(--faint); letter-spacing: .04em; }
+  .arrowdown { display:flex; justify-content:center; color: var(--faint); }
+
+  /* ---------- Lifecycle pipeline ---------- */
+  .pipe { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; min-width: 760px; }
+  .step { position: relative; padding: 0 8px; }
+  .step .num {
+    width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-weight: 700; font-size: 14px; color: #fff; background: var(--accent);
+    margin-bottom: 12px;
+  }
+  .step.scan .num { background: var(--domain); }
+  .step.serve .num { background: var(--clean); }
+  .step::before {
+    content: ""; position: absolute; top: 15px; left: -50%; width: 100%; height: 2px;
+    background: var(--line-strong); z-index: 0;
+  }
+  .step:first-child::before { display: none; }
+  .step .num { position: relative; z-index: 1; }
+  .step .s-title { font-weight: 700; font-size: 14px; }
+  .step .s-ep { font-family: var(--mono); font-size: 11.5px; color: var(--accent-deep); margin-top: 5px; word-break: break-word; }
+  .step .s-desc { font-size: 12.5px; color: var(--muted); margin-top: 7px; }
+
+  .gate {
+    margin-top: 18px; display: flex; gap: 14px; align-items: flex-start;
+    background: var(--clean-wash); border: 1px solid var(--clean); border-radius: var(--radius); padding: 15px 18px;
+  }
+  .gate .g-ic { flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; background: var(--clean); color:#fff; display:flex; align-items:center; justify-content:center; font-weight: 800; }
+  .gate .g-b { font-size: 14px; color: var(--ink); }
+  .gate .g-b b { color: var(--clean); }
+
+  /* ---------- Profiles table ---------- */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 13.5px; }
+  thead th {
+    text-align: left; font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; padding: 12px 14px; background: var(--surface-2); border-bottom: 1px solid var(--line-strong);
+  }
+  tbody td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody td:first-child { font-weight: 600; }
+  td .mono, th .mono { font-size: 12.5px; }
+  .pill { display:inline-block; font-family: var(--mono); font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+  .pill.dev  { background: var(--pending-wash); color: var(--pending); }
+  .pill.prod { background: var(--accent-wash); color: var(--accent-deep); }
+
+  /* ---------- Deployment topology ---------- */
+  .topo { display: grid; grid-template-columns: 1fr; gap: 16px; min-width: 680px; }
+  .topo-row { display: grid; gap: 14px; align-items: stretch; }
+  .r3 { grid-template-columns: 1.1fr 1fr 1fr; }
+  .svc { border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-2); padding: 14px; }
+  .svc.run { border-top: 3px solid var(--accent); }
+  .svc h4 { font-size: 14.5px; display:flex; align-items:center; justify-content:space-between; gap: 8px; }
+  .svc .badge { font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-deep); background: var(--accent-wash); padding: 3px 7px; border-radius: 6px; font-weight: 700; }
+  .svc p { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+  .containers { display: flex; flex-direction: column; gap: 7px; margin-top: 11px; }
+  .ctn { font-family: var(--mono); font-size: 11.5px; padding: 6px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft); display: flex; align-items: center; gap: 7px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot.app { background: var(--accent); } .dot.av { background: var(--infected); } .dot.db { background: var(--clean); }
+  .managed { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .infra { text-align:center; border: 1px dashed var(--line-strong); border-radius: var(--radius-sm); padding: 12px 10px; background: var(--surface); }
+  .infra .m-t { font-weight: 700; font-size: 13px; }
+  .infra .m-s { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+
+  /* ---------- Choices ---------- */
+  .choices { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .choice { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
+  .choice .c-n { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 700; }
+  .choice h3 { font-size: 16px; margin-top: 5px; font-weight: 750; }
+  .choice .c-why { font-size: 13.5px; color: var(--ink-soft); margin-top: 9px; }
+  .choice .c-why b { color: var(--ink); }
+  .choice .c-tag { display:inline-block; margin-top: 12px; font-family: var(--mono); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; }
+
+  /* ---------- Endpoints ---------- */
+  .verb { font-family: var(--mono); font-weight: 700; font-size: 12px; padding: 2px 7px; border-radius: 5px; }
+  .verb.get  { background: var(--accent-wash); color: var(--accent-deep); }
+  .verb.post { background: var(--clean-wash); color: var(--clean); }
+
+  /* ---------- Legend ---------- */
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px; font-size: 12.5px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .sw { width: 12px; height: 12px; border-radius: 4px; display: inline-block; }
+
+  footer { border-top: 1px solid var(--line); padding: 26px 0 40px; color: var(--faint); font-size: 12.5px; }
+  footer .mono { color: var(--muted); }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 720px) {
+    body { font-size: 15px; }
+    .choices { grid-template-columns: 1fr; }
+    .section { padding: 32px 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <div class="top-row">
+      <div>
+        <div class="kicker">Documentation d'architecture</div>
+        <h1 class="doc-title">Micro-service de fichiers securises
+          <span class="repo">praxedo-upload-backend</span>
+        </h1>
+      </div>
+      <button class="toggle" id="themeBtn" type="button" aria-label="Basculer le theme clair / sombre">
+        <span id="themeIcon">&#9788;</span><span id="themeTxt">Theme</span>
+      </button>
+    </div>
+    <p class="invariant">Une regle gouverne toute l'architecture : <b>aucun fichier n'est servi
+      sans avoir ete valide par un antivirus</b>. Le reste des choix decoule de cet invariant,
+      et de la contrainte d'echelle (nombreux clients simultanes, fichiers de tailles tres variables).</p>
+    <div class="chips">
+      <span class="chip">Java 21</span>
+      <span class="chip">Spring Boot 3.3</span>
+      <span class="chip">Architecture hexagonale</span>
+      <span class="chip">GCP / Cloud Run</span>
+      <span class="chip">ClamAV</span>
+      <span class="chip">PostgreSQL + Flyway</span>
+      <span class="chip">Pub/Sub</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- 1. Vue d'ensemble -->
+  <section class="section" id="apercu">
+    <div class="eyebrow">&sect;1 &nbsp;Vue d'ensemble<span class="rule"></span></div>
+    <h2 class="title">Recevoir, mettre en quarantaine, ne servir que le sain</h2>
+    <div class="prose">
+      <p class="lead">Le service recoit des fichiers (utilisateurs et systemes tiers), garantit
+        qu'ils sont analyses par un antivirus, et n'expose au telechargement que ceux declares
+        <b>sains</b>. Un fichier infecte reste en quarantaine, jamais telechargeable.</p>
+      <p style="margin-top:16px">L'application est structuree en <b>architecture hexagonale</b>
+        (ports &amp; adapters) : un <b>domaine</b> pur (sans dependance a un framework) entoure de
+        <b>ports</b> (interfaces) dont les <b>adapters</b> concrets sont selectionnes par le profil
+        Spring actif. Le meme code metier tourne ainsi 100&nbsp;% en local (sans dependance externe)
+        et en production sur GCP, en ne remplacant que les adapters.</p>
+    </div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--clean)"></i> CLEAN &mdash; valide, telechargeable</span>
+      <span><i class="sw" style="background:var(--infected)"></i> INFECTED &mdash; bloque, quarantaine</span>
+      <span><i class="sw" style="background:var(--pending)"></i> PENDING / SCANNING &mdash; en cours</span>
+      <span><i class="sw" style="background:var(--domain)"></i> Coeur de domaine</span>
+      <span><i class="sw" style="background:var(--accent)"></i> Port / adapter de production</span>
+    </div>
+  </section>
+
+  <!-- 2. Architecture hexagonale -->
+  <section class="section" id="hexagonale">
+    <div class="eyebrow">&sect;2 &nbsp;Architecture hexagonale<span class="rule"></span></div>
+    <h2 class="title">Domaine au centre, adapters interchangeables</h2>
+    <p class="lead prose">Les dependances pointent <b>vers l'interieur</b> : le Web pilote
+      l'Application, l'Application ne connait que les <b>ports</b> du Domaine, et les adapters
+      d'infrastructure <b>implementent</b> ces ports. Le domaine ne depend de rien.</p>
+
+    <div class="figure" style="margin-top:20px" role="img"
+         aria-label="Diagramme en couches : Web pilote l'Application, qui utilise les ports du Domaine, implementes par deux jeux d'adapters selon le profil.">
+      <div class="hex">
+
+        <!-- Web -->
+        <div class="band">
+          <div class="band-h">Adapters entrants &mdash; Web (REST + securite)</div>
+          <div class="grid g-web">
+            <div class="node"><div class="n-title mono">FilesController</div><div class="n-sub">/api/files</div></div>
+            <div class="node"><div class="n-title mono">BatchesController</div><div class="n-sub">/api/batches (S2S)</div></div>
+            <div class="node"><div class="n-title mono">ScanEventsController</div><div class="n-sub">/internal/scan-events</div></div>
+            <div class="node"><div class="n-title mono">ApiKeyAuthFilter</div><div class="n-sub">en-tete X-API-Key</div></div>
+          </div>
+        </div>
+
+        <div class="arrowdown" aria-hidden="true">&#9662;</div>
+
+        <!-- Application -->
+        <div class="band">
+          <div class="band-h">Application &mdash; services de cas d'usage</div>
+          <div class="grid g-app">
+            <div class="node"><div class="n-title mono">FileUploadService</div><div class="n-sub">enregistre + ticket d'upload</div></div>
+            <div class="node"><div class="n-title mono">FileScanService</div><div class="n-sub">lit, scanne, statue</div></div>
+            <div class="node"><div class="n-title mono">FileDownloadService</div><div class="n-sub">garde-fou CLEAN</div></div>
+            <div class="node"><div class="n-title mono">FileQueryService</div><div class="n-sub">liste, stats, detail</div></div>
+            <div class="node"><div class="n-title mono">ApiKeyService</div><div class="n-sub">resout la cle -&gt; owner</div></div>
+            <div class="node"><div class="n-title mono">ReconciliationService</div><div class="n-sub">balaye les uploads perimes</div></div>
+          </div>
+        </div>
+
+        <div class="arrowdown" aria-hidden="true">&#9662;</div>
+
+        <!-- Domaine + ports -->
+        <div class="band core">
+          <div class="band-h">Domaine (POJO, sans framework) &mdash; entites &amp; ports</div>
+          <div class="domain-objs">
+            <span class="obj">FileRecord</span>
+            <span class="obj">FileStatus</span>
+            <span class="obj">ScanVerdict</span>
+            <span class="obj">ApiClient</span>
+            <span class="obj">PageResult</span>
+            <span class="obj">StatusCounts</span>
+            <span class="obj">FileQuery</span>
+          </div>
+          <div class="ports-h">Ports (interfaces) &mdash; le contrat que l'infrastructure doit remplir</div>
+          <div class="ports">
+            <span class="port">FileStorage</span>
+            <span class="port">FileMetadataRepository</span>
+            <span class="port">ApiClientRepository</span>
+            <span class="port">AntivirusScanner</span>
+            <span class="port">ScanQueue</span>
+            <span class="port">IdGenerator</span>
+          </div>
+        </div>
+
+        <div class="flowhint" aria-hidden="true">&#9651;&nbsp; les adapters implementent les ports ci-dessus &nbsp;&#9651;</div>
+
+        <!-- Adapters -->
+        <div class="adapters">
+          <div class="adcol dev">
+            <h4>profils <span class="pill dev">local</span> <span class="pill dev">test</span></h4>
+            <div class="who">Zero dependance externe &mdash; tests rapides, demo hors-ligne</div>
+            <div class="maprow">
+              <div class="impl"><b>LocalFileStorage</b> &rarr; FileStorage</div>
+              <div class="impl"><b>InMemory*Repository</b> &rarr; les 2 repos</div>
+              <div class="impl"><b>FakeAntivirusScanner</b> &rarr; AntivirusScanner</div>
+              <div class="impl"><b>Synchronous / InProcess ScanQueue</b> &rarr; ScanQueue</div>
+              <div class="impl"><b>UuidIdGenerator</b> &rarr; IdGenerator</div>
+            </div>
+          </div>
+          <div class="adcol prod">
+            <h4>profil <span class="pill prod">gcp</span></h4>
+            <div class="who">Adapters reels &mdash; production sur Google Cloud</div>
+            <div class="maprow">
+              <div class="impl"><b>GcsFileStorage</b> &rarr; FileStorage</div>
+              <div class="impl"><b>Jpa*Repository</b> (Cloud SQL) &rarr; les 2 repos</div>
+              <div class="impl"><b>ClamavScanner</b> &rarr; AntivirusScanner</div>
+              <div class="impl"><b>PubSubScanQueue</b> &rarr; ScanQueue</div>
+              <div class="impl"><b>UuidIdGenerator</b> &rarr; IdGenerator</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <div class="figcap">Schema 1 &mdash; Couches et sens des dependances. Un seul point de bascule : le profil Spring.</div>
+    </div>
+  </section>
+
+  <!-- 3. Cycle de vie -->
+  <section class="section" id="cycle">
+    <div class="eyebrow">&sect;3 &nbsp;Le cycle de vie d'un fichier<span class="rule"></span></div>
+    <h2 class="title">De la reception au telechargement, gardes a chaque etape</h2>
+    <p class="lead prose">Les octets transitent <b>directement</b> entre le client et le stockage
+      (URL signee) : l'application ne relaie jamais les gros fichiers. L'analyse est
+      <b>asynchrone</b> et <b>declenchee automatiquement</b> apres le depot.</p>
+
+    <div class="figure" style="margin-top:20px" role="img"
+         aria-label="Pipeline en cinq etapes : enregistrement, depot direct, declenchement, analyse, service conditionnel.">
+      <div class="pipe">
+        <div class="step reg">
+          <div class="num">1</div>
+          <div class="s-title">Enregistrement</div>
+          <div class="s-ep">POST /api/files</div>
+          <div class="s-desc">Cree un FileRecord au statut PENDING et renvoie un ticket d'upload (URL signee, TTL court).</div>
+        </div>
+        <div class="step up">
+          <div class="num">2</div>
+          <div class="s-title">Depot direct</div>
+          <div class="s-ep">PUT &rarr; GCS</div>
+          <div class="s-desc">Le client televerse les octets directement vers le stockage. L'app ne les relaie pas.</div>
+        </div>
+        <div class="step trig">
+          <div class="num">3</div>
+          <div class="s-title">Declenchement</div>
+          <div class="s-ep">GCS OBJECT_FINALIZE &rarr; Pub/Sub</div>
+          <div class="s-desc">La notification de fin d'upload est poussee vers /internal/scan-events. Aucune action manuelle.</div>
+        </div>
+        <div class="step scan">
+          <div class="num">4</div>
+          <div class="s-title">Analyse</div>
+          <div class="s-ep">FileScanService &rarr; ClamAV</div>
+          <div class="s-desc">Lit le contenu via FileStorage, l'envoie a clamd, statue CLEAN ou INFECTED, persiste le verdict.</div>
+        </div>
+        <div class="step serve">
+          <div class="num">5</div>
+          <div class="s-title">Service</div>
+          <div class="s-ep">GET /api/files/{id}/content</div>
+          <div class="s-desc">Renvoie une redirection 302 vers une URL signee de telechargement, uniquement si CLEAN.</div>
+        </div>
+      </div>
+
+      <div class="gate">
+        <div class="g-ic" aria-hidden="true">&#10003;</div>
+        <div class="g-b">Le garde-fou vit dans <span class="mono">FileDownloadService</span> :
+          tout statut autre que <b>CLEAN</b> (en cours, echoue, et bien sur <b>INFECTED</b>) donne un
+          refus. La regle est <b>fail-safe</b> : en cas de doute, on ne sert pas.</div>
+      </div>
+      <div class="figcap">Schema 2 &mdash; Cycle de vie. En profils local/test, l'etape 3 est remplacee par un appel a /rescan (voir &sect;4).</div>
+    </div>
+  </section>
+
+  <!-- 4. Profils -->
+  <section class="section" id="profils">
+    <div class="eyebrow">&sect;4 &nbsp;Les profils Spring<span class="rule"></span></div>
+    <h2 class="title">Un meme domaine, trois cablages</h2>
+    <p class="lead prose">Chaque port a un adapter par profil. Les profils <span class="mono">local</span>
+      et <span class="mono">test</span> n'ont <b>aucune dependance externe</b> (ni base, ni cloud) :
+      la base et JPA sont meme desactives par defaut et reactives seulement en <span class="mono">gcp</span>.</p>
+
+    <div class="tablewrap" style="margin-top:20px">
+      <table>
+        <thead>
+          <tr>
+            <th>Port</th>
+            <th><span class="pill dev">local / test</span></th>
+            <th><span class="pill prod">gcp</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">FileStorage</td><td><span class="mono">LocalFileStorage</span> (disque + proxy)</td><td><span class="mono">GcsFileStorage</span> (URLs signees V4)</td></tr>
+          <tr><td class="mono">FileMetadataRepository</td><td><span class="mono">InMemoryFileMetadataRepository</span></td><td><span class="mono">JpaFileMetadataRepository</span> (Cloud SQL)</td></tr>
+          <tr><td class="mono">ApiClientRepository</td><td><span class="mono">InMemoryApiClientRepository</span></td><td><span class="mono">JpaApiClientRepository</span> (Cloud SQL)</td></tr>
+          <tr><td class="mono">AntivirusScanner</td><td><span class="mono">FakeAntivirusScanner</span> (detecte EICAR)</td><td><span class="mono">ClamavScanner</span> (clamd reel)</td></tr>
+          <tr><td class="mono">ScanQueue</td><td><span class="mono">SynchronousScanQueue</span> (test) / <span class="mono">InProcessScanQueue</span> (local)</td><td><span class="mono">PubSubScanQueue</span> (+ DLQ)</td></tr>
+          <tr><td class="mono">IdGenerator</td><td colspan="2"><span class="mono">UuidIdGenerator</span> &mdash; commun aux trois profils</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="prose" style="margin-top:16px; color:var(--muted); font-size:14px">
+      En local, le depot passe par un proxy (<span class="mono">/api/_local/upload</span>) qui stocke
+      les octets mais ne declenche pas le scan : on le lance via <span class="mono">POST /rescan</span>.
+      Le declenchement <b>automatique</b> post-upload (notification GCS) n'existe que dans la topologie
+      deployee.</p>
+  </section>
+
+  <!-- 5. Topologie de deploiement -->
+  <section class="section" id="deploiement">
+    <div class="eyebrow">&sect;5 &nbsp;Topologie de deploiement (GCP)<span class="rule"></span></div>
+    <h2 class="title">Deux services Cloud Run, une file au milieu</h2>
+    <p class="lead prose">Le plan de service (<span class="mono">api</span>) et le plan d'analyse
+      (<span class="mono">worker</span>) sont separes : ils s'echelonnent independamment, et une
+      analyse lourde ne penalise jamais une requete de service.</p>
+
+    <div class="figure" style="margin-top:20px" role="img"
+         aria-label="Topologie : le navigateur parle au service api et depose sur GCS ; GCS notifie Pub/Sub qui pousse vers le worker ; les deux services partagent Cloud SQL.">
+      <div class="topo">
+
+        <div class="topo-row r3">
+          <div class="svc">
+            <h4>Client / UI <span class="badge">navigateur</span></h4>
+            <p>Enregistre, depose et telecharge via des URLs signees &mdash; les octets ne transitent jamais par l'app.</p>
+          </div>
+          <div class="svc run">
+            <h4>api <span class="badge">Cloud Run</span></h4>
+            <p>Sert /api/** (public, X-API-Key verifie dans l'app). Signe les URLs, publie les demandes de scan.</p>
+            <div class="containers">
+              <div class="ctn"><span class="dot app"></span> app (profil gcp)</div>
+              <div class="ctn"><span class="dot db"></span> Cloud SQL Auth Proxy</div>
+            </div>
+          </div>
+          <div class="svc run">
+            <h4>worker <span class="badge">Cloud Run</span></h4>
+            <p>Recoit le push Pub/Sub sur /internal/scan-events, lit GCS, scanne, ecrit le verdict. min-instances=1 (ClamAV chaud).</p>
+            <div class="containers">
+              <div class="ctn"><span class="dot app"></span> app (profil gcp)</div>
+              <div class="ctn"><span class="dot av"></span> ClamAV (clamd, sidecar)</div>
+              <div class="ctn"><span class="dot db"></span> Cloud SQL Auth Proxy</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flowhint" aria-hidden="true">GCS &nbsp;OBJECT_FINALIZE&nbsp; &rarr; &nbsp;Pub/Sub&nbsp; &rarr; &nbsp;push OIDC vers le worker</div>
+
+        <div class="managed">
+          <div class="infra"><div class="m-t">Cloud Storage</div><div class="m-s">bucket des fichiers + notification de finalisation</div></div>
+          <div class="infra"><div class="m-t">Pub/Sub</div><div class="m-s">topic scan-requests + DLQ + souscription push</div></div>
+          <div class="infra"><div class="m-t">Cloud SQL</div><div class="m-s">PostgreSQL (metadonnees, statuts)</div></div>
+        </div>
+
+      </div>
+      <div class="figcap">Schema 3 &mdash; Topologie Cloud Run. Le worker n'est pas public : seule la souscription push (jeton OIDC) l'invoque.</div>
+    </div>
+  </section>
+
+  <!-- 6. Choix techniques -->
+  <section class="section" id="choix">
+    <div class="eyebrow">&sect;6 &nbsp;Choix techniques &amp; justifications<span class="rule"></span></div>
+    <h2 class="title">Ce qui a ete decide, et pourquoi</h2>
+
+    <div class="choices" style="margin-top:20px">
+
+      <div class="choice">
+        <div class="c-n">01</div>
+        <h3>Architecture hexagonale</h3>
+        <p class="c-why">Le domaine ne depend d'aucun framework ; l'infrastructure implemente des ports.
+          <b>Pourquoi</b> : tester le metier sans Spring ni base, et remplacer un adapter (stockage,
+          scanner, file) sans toucher au domaine.</p>
+        <span class="c-tag">Testabilite &middot; decouplage</span>
+      </div>
+
+      <div class="choice">
+        <div class="c-n">02</div>
+        <h3>URLs signees V4, octets hors de l'app</h3>
+        <p class="c-why">Le client depose et telecharge <b>directement</b> sur GCS via des URLs signees.
+          <b>Pourquoi</b> : a l'echelle voulue (nombreux clients, fichiers tres volumineux), relayer les
+          octets saturerait memoire et bande passante. L'app ne gere que des metadonnees.</p>
+        <span class="c-tag">Scalabilite &middot; cout</span>
+      </div>
+
+      <div class="choice">
+        <div class="c-n">03</div>
+        <h3>Invariant de telechargement fail-safe</h3>
+        <p class="c-why">Le service ne renvoie le contenu que si le statut est <b>CLEAN</b> ; tout le
+          reste est refuse. <b>Pourquoi</b> : c'est la garantie centrale du produit, et un defaut doit
+          pencher du cote sur (ne pas servir) plutot que du cote risque.</p>
+        <span class="c-tag">Securite &middot; garantie produit</span>
+      </div>
+
+      <div class="choice">
+        <div class="c-n">04</div>
+        <h3>Analyse asynchrone &amp; auto-declenchee</h3>
+        <p class="c-why">Le port <span class="mono">ScanQueue</span> decouple depot et analyse ; en prod,
+          Pub/Sub + file de rebut (DLQ) + reessais. Le scan demarre sur la notification GCS de fin
+          d'upload. <b>Pourquoi</b> : encaisser les pics et isoler les analyses lentes du chemin de service.</p>
+        <span class="c-tag">Resilience &middot; debit</span>
+      </div>
+
+      <div class="choice">
+        <div class="c-n">05</div>
+        <h3>ClamAV en sidecar, protocole a la main</h3>
+        <p class="c-why">Le worker embarque ClamAV en conteneur voisin ; l'app dialogue avec clamd
+          en <span class="mono">INSTREAM</span> via un petit client ecrit maison (zero dependance).
+          <b>Pourquoi</b> : latence reseau minimale, controle total du protocole, aucune librairie tierce a suivre.</p>
+        <span class="c-tag">Maitrise &middot; latence</span>
+      </div>
+
+      <div class="choice">
+        <div class="c-n">06</div>
+        <h3>Profils : local/test sans dependance externe</h3>
+        <p class="c-why">local et test tournent en memoire (base et JPA desactives par defaut) ; gcp active
+          les adapters reels. <b>Pourquoi</b> : boucle de dev et CI rapides et deterministes, sans Docker
+          ni cloud, tout en gardant un chemin de production fidele.</p>
+        <span class="c-tag">Vitesse &middot; determinisme</span>
+      </div>
+
+      <div class="choice">
+        <div class="c-n">07</div>
+        <h3>Domaine POJO, persistance a part</h3>
+        <p class="c-why">Le domaine n'a aucune annotation JPA ; des entites dediees
+          (<span class="mono">FileEntity</span>, <span class="mono">ApiClientEntity</span>) et Flyway gerent
+          la persistance. <b>Pourquoi</b> : ne pas laisser le schema de base dicter le modele metier.</p>
+        <span class="c-tag">Purete du modele</span>
+      </div>
+
+      <div class="choice">
+        <div class="c-n">08</div>
+        <h3>Tests : vrai conteneur ou mock, a bon escient</h3>
+        <p class="c-why">Testcontainers (vrai ClamAV, vrai PostgreSQL, fake-gcs) la ou <b>nous</b> ecrivons
+          le protocole ; mock la ou l'on delegue a un SDK de confiance (Pub/Sub, signature GCS).
+          <b>Pourquoi</b> : tester le risque reel sans payer des dependances a faible valeur.</p>
+        <span class="c-tag">Strategie de test</span>
+      </div>
+
+      <div class="choice">
+        <div class="c-n">09</div>
+        <h3>Securite par cle API multi-tenant</h3>
+        <p class="c-why">Authentification machine-a-machine par <span class="mono">X-API-Key</span> ; seul le
+          <b>hash SHA-256</b> est stocke, et chaque client ne voit que ses fichiers (isolation par owner).
+          <b>Pourquoi</b> : adapte a l'usage systeme-a-systeme, sans stocker de secret en clair.</p>
+        <span class="c-tag">Securite &middot; multi-tenant</span>
+      </div>
+
+      <div class="choice">
+        <div class="c-n">10</div>
+        <h3>Reconciliation des uploads perimes</h3>
+        <p class="c-why"><span class="mono">ReconciliationService</span> balaye les fichiers restes trop
+          longtemps en attente/analyse (TTL) et les fait expirer. <b>Pourquoi</b> : un depot jamais suivi
+          d'octets, ou un scan perdu, ne doit pas rester bloque indefiniment.</p>
+        <span class="c-tag">Robustesse operationnelle</span>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 7. Surface d'API -->
+  <section class="section" id="api">
+    <div class="eyebrow">&sect;7 &nbsp;Surface d'API<span class="rule"></span></div>
+    <h2 class="title">Points d'entree HTTP</h2>
+    <div class="tablewrap" style="margin-top:20px">
+      <table>
+        <thead>
+          <tr><th>Methode &amp; route</th><th>Role</th><th>Reponse</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="verb post">POST</span> <span class="mono">/api/files</span></td><td>Enregistre un upload</td><td>Ticket (id, statut, URL signee, expiration)</td></tr>
+          <tr><td><span class="verb get">GET</span> <span class="mono">/api/files</span></td><td>Liste paginee (q, statut)</td><td><span class="mono">PageResult&lt;FileView&gt;</span></td></tr>
+          <tr><td><span class="verb get">GET</span> <span class="mono">/api/files/stats</span></td><td>Compteurs par statut</td><td><span class="mono">StatusCounts</span></td></tr>
+          <tr><td><span class="verb get">GET</span> <span class="mono">/api/files/{id}</span></td><td>Detail d'un fichier</td><td><span class="mono">FileView</span></td></tr>
+          <tr><td><span class="verb get">GET</span> <span class="mono">/api/files/{id}/content</span></td><td>Telechargement <em>si CLEAN</em></td><td>302 vers URL signee, sinon 403</td></tr>
+          <tr><td><span class="verb post">POST</span> <span class="mono">/api/files/{id}/rescan</span></td><td>Relance l'analyse</td><td>202 Accepted</td></tr>
+          <tr><td><span class="verb post">POST</span> <span class="mono">/api/batches</span></td><td>Enregistrement par lot (systeme-a-systeme)</td><td>Lot de tickets</td></tr>
+          <tr><td><span class="verb post">POST</span> <span class="mono">/internal/scan-events</span></td><td>Push Pub/Sub (profil gcp)</td><td>Ack idempotent</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><span class="mono">praxedo-upload-backend</span> &mdash; documentation d'architecture.
+      Le schema reflete le code des profils <span class="mono">local</span>, <span class="mono">test</span>
+      et <span class="mono">gcp</span>. Genere avec Claude Code.</p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var btn = document.getElementById('themeBtn');
+    var icon = document.getElementById('themeIcon');
+    var txt = document.getElementById('themeTxt');
+    function stored() { try { return localStorage.getItem('praxedo-doc-theme'); } catch (e) { return null; } }
+    function current() {
+      var attr = root.getAttribute('data-theme');
+      if (attr) return attr;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    function paint(mode) {
+      if (mode === 'dark') { icon.innerHTML = '&#9789;'; txt.textContent = 'Sombre'; }
+      else { icon.innerHTML = '&#9788;'; txt.textContent = 'Clair'; }
+    }
+    var init = stored();
+    if (init) root.setAttribute('data-theme', init);
+    paint(current());
+    btn.addEventListener('click', function () {
+      var next = current() === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('praxedo-doc-theme', next); } catch (e) {}
+      paint(next);
+    });
+  })();
+</script>
+
+</body>
+</html>
