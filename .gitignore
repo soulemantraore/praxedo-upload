@@ -6,6 +6,10 @@ target/
 data/
 *.log
 
+# Variables d'environnement locales (secrets) — voir .env.example
+.env
+.env.local
+
 # OS
 .DS_Store
 
