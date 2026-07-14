@@ -49,8 +49,6 @@ spec:
               value: ${GCS_BUCKET}
             - name: PUBSUB_SCAN_TOPIC
               value: ${PUBSUB_SCAN_TOPIC}
-            # Supabase Postgres connection string (host + sslmode=require), e.g.
-            # jdbc:postgresql://<project>.pooler.supabase.com:5432/postgres?sslmode=require
             - name: DB_URL
               value: ${DB_URL}
             - name: DB_USER

@@ -24,10 +24,8 @@ IMAGE            ?= praxedo-upload-backend
 IMAGE_TAG        ?= latest
 
 # ---- Database: Supabase (managed Postgres, provisioned OUTSIDE GCP) ----
-# DB_URL is the full JDBC connection string to your Supabase project (host + TLS).
-# Use the session pooler (:5432) or a direct connection so Flyway migrations work
-# (the transaction pooler :6543 does not support all Flyway features). Example:
-#   jdbc:postgresql://<project>.pooler.supabase.com:5432/postgres?sslmode=require
+# DB_URL = full Supabase JDBC string. Use the session pooler (:5432) or a direct
+# connection for Flyway (the :6543 transaction pooler lacks some Flyway features).
 DB_URL           ?= jdbc:postgresql://REPLACE-ME.pooler.supabase.com:5432/postgres?sslmode=require
 DB_USER          ?= postgres
 DB_SECRET_NAME   ?= praxedo-db-password
@@ -177,9 +175,8 @@ secrets: ## Store the Supabase DB password in Secret Manager (pass DB_PASSWORD=.
 	   --data-file=- --project=$(PROJECT_ID); \
 	 echo "Supabase DB password stored in Secret Manager secret '$(DB_SECRET_NAME)' (latest)."
 
-# Database: Supabase (managed Postgres) is provisioned OUTSIDE GCP, in the
-# Supabase dashboard. There is no "sql" target: just store the password with
-# "make secrets" and point DB_URL at the Supabase connection string.
+# Supabase is provisioned outside GCP (dashboard) -> no "sql" target here:
+# store the password with "make secrets" and set DB_URL.
 
 bucket: ## Create the GCS bucket and apply the CORS policy for browser signed URLs.
 	gcloud storage buckets create gs://$(BUCKET) \

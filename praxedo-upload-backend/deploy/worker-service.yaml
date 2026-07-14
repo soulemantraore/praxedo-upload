@@ -72,8 +72,6 @@ spec:
               value: ${SCANNER_AUDIENCE}
             - name: SCANNER_OIDC_ENABLED
               value: "true"
-            # Supabase Postgres connection string (host + sslmode=require), e.g.
-            # jdbc:postgresql://<project>.pooler.supabase.com:5432/postgres?sslmode=require
             - name: DB_URL
               value: ${DB_URL}
             - name: DB_USER
