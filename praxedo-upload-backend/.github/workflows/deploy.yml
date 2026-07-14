@@ -1,0 +1,81 @@
+# =====================================================================
+# CI/CD: test, build the image, and deploy to Cloud Run on push to main.
+#
+# Authentication uses Workload Identity Federation (no long-lived JSON key).
+#
+# Required GitHub -> Settings -> Secrets and variables -> Actions:
+#   Secrets:
+#     GCP_WIF_PROVIDER   Full WIF provider resource, e.g.
+#                        projects/123456789/locations/global/workloadIdentityPools/github/providers/github
+#     GCP_DEPLOY_SA      Deploy service account email, e.g.
+#                        deployer@my-gcp-project.iam.gserviceaccount.com
+#   Variables:
+#     GCP_PROJECT_ID     e.g. my-gcp-project
+#     GCP_REGION         e.g. europe-west1
+#     GCS_BUCKET         e.g. my-gcp-project-praxedo-files
+#     UI_ORIGIN          e.g. https://app.example.com
+#
+# The deploy SA needs: roles/run.admin, roles/iam.serviceAccountUser (to act as
+# the api/worker/push runtime SAs), roles/artifactregistry.writer,
+# roles/cloudbuild.builds.editor, roles/pubsub.admin, roles/storage.admin.
+#
+# This workflow assumes the one-time bootstrap has already been run manually:
+#   make enable-apis && make bootstrap && DB_PASSWORD=... make infra
+# =====================================================================
+name: deploy
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write   # required for Workload Identity Federation
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run tests
+        # Testcontainers uses the Docker daemon preinstalled on ubuntu-latest.
+        run: mvn -B test
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install envsubst (gettext)
+        run: sudo apt-get update && sudo apt-get install -y gettext-base
+
+      - name: Build image and deploy to Cloud Run
+        working-directory: deploy
+        run: |
+          make deploy \
+            PROJECT_ID="$PROJECT_ID" \
+            REGION="$REGION" \
+            IMAGE_TAG="${{ github.sha }}" \
+            BUCKET="${{ vars.GCS_BUCKET }}" \
+            UI_ORIGIN="${{ vars.UI_ORIGIN }}"

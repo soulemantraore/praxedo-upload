@@ -1,0 +1,30 @@
+# Profil "gcp" : adapters reels (scanner distant, Pub/Sub, JPA/Cloud SQL, GCS).
+storage:
+  gcs:
+    bucket: ${GCS_BUCKET:praxedo-upload-files}
+
+spring:
+  # Reactive base/JPA/Flyway (l'application.yml les exclut par defaut pour local/test).
+  autoconfigure:
+    exclude:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/praxedo}
+    username: ${DB_USER:praxedo}
+    password: ${DB_PASSWORD:praxedo}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  flyway:
+    enabled: true
+
+scanner:
+  base-url: ${SCANNER_URL}
+  audience: ${SCANNER_AUDIENCE:${SCANNER_URL}}
+  oidc-enabled: ${SCANNER_OIDC_ENABLED:true}
+  connect-timeout: PT5S
+  read-timeout: PT550S
+
+pubsub:
+  project-id: ${GCP_PROJECT_ID:praxedo-upload}
+  scan-topic: ${PUBSUB_SCAN_TOPIC:scan-requests}

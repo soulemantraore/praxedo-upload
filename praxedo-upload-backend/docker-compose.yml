@@ -1,0 +1,58 @@
+# Infra locale pour experimenter le flux reel (profil gcp) : scanner (Python + ClamAV),
+# Pub/Sub, PostgreSQL, GCS. Pour le dev courant, prefere le profil "local" (adapters fake, sans Docker).
+#
+#   docker compose up -d
+#   JAVA_HOME=<jdk-21> SCANNER_URL=http://localhost:8000 SCANNER_OIDC_ENABLED=false \
+#     mvn spring-boot:run -Dspring-boot.run.profiles=gcp
+#
+# L'app appelle le scanner sur http://localhost:8000 (OIDC desactive en local). Le scanner lit
+# les objets via fake-gcs (STORAGE_EMULATOR_HOST). ClamAV est desormais un sidecar du scanner,
+# plus de l'app.
+#
+# NB : les tests d'integration demarrent leurs propres conteneurs via Testcontainers ;
+# ce compose sert a lancer l'app manuellement contre une infra reelle. Les credentials GCP
+# (GOOGLE_APPLICATION_CREDENTIALS) restent requises pour un vrai GCS/Pub/Sub.
+services:
+  clamav:
+    # Image multi-arch (inclut arm64) ; l'image clamav/clamav par defaut est amd64 seulement.
+    # Utilise par le scanner (ci-dessous), plus par l'app.
+    image: clamav/clamav-debian:latest
+    ports:
+      - "3310:3310"
+
+  scanner:
+    # Le service de scan externe (repo praxedo-upload-scanner). Lit gs:// depuis fake-gcs.
+    build: ../praxedo-upload-scanner
+    environment:
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      STORAGE_EMULATOR_HOST: http://fake-gcs:4443
+    ports:
+      - "8000:8080"
+    depends_on:
+      - clamav
+      - fake-gcs
+
+  pubsub-emulator:
+    # Emulateur Pub/Sub (composant du Cloud SDK).
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk:latest
+    command: gcloud beta emulators pubsub start --project=praxedo-upload --host-port=0.0.0.0:8085
+    ports:
+      - "8085:8085"
+
+  postgres:
+    # Cloud SQL en local.
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: praxedo
+      POSTGRES_USER: praxedo
+      POSTGRES_PASSWORD: praxedo
+    ports:
+      - "5432:5432"
+
+  fake-gcs:
+    # Emulateur GCS (multi-arch, inclut arm64).
+    image: fsouza/fake-gcs-server:latest
+    command: -scheme http -host 0.0.0.0 -port 4443
+    ports:
+      - "4443:4443"

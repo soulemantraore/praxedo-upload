@@ -1,0 +1,15 @@
+# Keep the Docker build context small and reproducible.
+target/
+.git/
+.github/
+.mvn/
+deploy/
+data/
+*.log
+.DS_Store
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+docker-compose.yml

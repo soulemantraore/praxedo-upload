@@ -1,0 +1,112 @@
+# =====================================================================
+# Cloud Run service: praxedo-worker
+# Two containers:
+#   - app             : the Spring Boot application (profile gcp).
+#                       Receives the Pub/Sub push at /internal/scan-events, then
+#                       calls the private scanner service over HTTP (OIDC) with
+#                       the object's gs:// URI, and writes the verdict it returns
+#                       to Cloud SQL. The worker never scans bytes itself.
+#   - cloud-sql-proxy : Cloud SQL Auth Proxy, Postgres on localhost:5432.
+#
+# ClamAV no longer lives here: scanning moved to the separate praxedo-scanner
+# service. The worker is therefore light and may scale to zero.
+#
+# The worker is NOT public: ingress is open so Pub/Sub can reach it over the
+# internet, but only the push subscription's service account is granted
+# run.invoker (OIDC token). See deploy/README.md.
+#
+# Rendered by "make deploy-worker" via envsubst, applied with
+# "gcloud run services replace". Placeholders: ${...}.
+#
+# Resource note: Cloud Run bills the SUM of all container limits. Here that is
+# 2 vCPU / 2Gi (app 1/1Gi + proxy 1/1Gi).
+# =====================================================================
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ${WORKER_SERVICE}
+  labels:
+    app: praxedo-upload
+    component: worker
+  annotations:
+    run.googleapis.com/launch-stage: GA
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        # No warm signature DB to keep any more (ClamAV moved to the scanner);
+        # the worker can scale to zero. Cold starts are absorbed by Pub/Sub retries.
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "5"
+        # Start the app only once the Cloud SQL proxy reports healthy.
+        run.googleapis.com/container-dependencies: '{"app":["cloud-sql-proxy"]}'
+    spec:
+      serviceAccountName: ${WORKER_SA}
+      # A remote scan can be slow; keep this >= the scanner read-timeout and
+      # <= the Pub/Sub push ack deadline (600s).
+      timeoutSeconds: 600
+      containers:
+        # ---- Ingress container: the application ----
+        - name: app
+          image: ${IMAGE_URI}
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: gcp
+            - name: SERVER_PORT
+              value: "8080"
+            - name: GCP_PROJECT_ID
+              value: ${GCP_PROJECT_ID}
+            - name: GCS_BUCKET
+              value: ${GCS_BUCKET}
+            - name: PUBSUB_SCAN_TOPIC
+              value: ${PUBSUB_SCAN_TOPIC}
+            # Private scanner service. SCANNER_AUDIENCE is the OIDC token audience
+            # (the scanner URL); OIDC is enabled in production.
+            - name: SCANNER_URL
+              value: ${SCANNER_URL}
+            - name: SCANNER_AUDIENCE
+              value: ${SCANNER_AUDIENCE}
+            - name: SCANNER_OIDC_ENABLED
+              value: "true"
+            - name: DB_URL
+              value: jdbc:postgresql://127.0.0.1:5432/${DB_NAME}
+            - name: DB_USER
+              value: ${DB_USER}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${DB_SECRET_NAME}
+                  key: latest
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 30
+        # ---- Sidecar: Cloud SQL Auth Proxy (localhost:5432) ----
+        - name: cloud-sql-proxy
+          image: ${PROXY_IMAGE}
+          args:
+            - "--port=5432"
+            - "--address=127.0.0.1"
+            - "${SQL_CONNECTION_NAME}"
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            tcpSocket:
+              port: 5432
+            periodSeconds: 10
+            failureThreshold: 30
