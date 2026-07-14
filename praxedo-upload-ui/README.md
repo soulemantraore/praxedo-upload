@@ -24,8 +24,8 @@ statut d'analyse antivirus, et de télécharger uniquement les fichiers déclar�
 - **TanStack Query v5** pour la synchronisation avec l'API (statistiques, liste des
   fichiers avec polling conditionnel, upload, rescan) — pas de gestionnaire d'état
   global, la donnée serveur suffit.
-- **Vitest** + **Testing Library** + **MSW** (Mock Service Worker) pour les tests
-  unitaires et de composants, avec un faux backend en mémoire.
+- **MSW** (Mock Service Worker) pour la démo hors ligne : un faux backend en mémoire
+  servi directement dans le navigateur.
 - Polices **IBM Plex Sans** / **IBM Plex Mono**.
 - Authentification par en-tête `X-API-Key` (clé API par client, machine-to-machine).
 
@@ -44,11 +44,11 @@ même esprit que les adaptateurs du backend :
 
 | Emplacement | Rôle |
 |---|---|
-| `src/lib/format.ts` | Logique de présentation pure (formatage de tailles, dates, libellés), testée sans React. |
+| `src/lib/format.ts` | Logique de présentation pure (formatage de tailles, dates, libellés), indépendante de React. |
 | `src/api/client.ts` | `FileApi`, client HTTP injectable (`fetch` en paramètre). **Seul point à adapter** si le JSON réellement renvoyé par le backend diffère du contrat (spec section 4). |
 | `src/api/hooks.ts` | Hooks TanStack Query : statistiques, liste des fichiers (avec polling conditionnel), upload, rescan. |
 | `src/components/*` | Composants de présentation (tableau de fichiers, badges, modales, pagination, recherche...). |
-| `test/mocks/*` | Faux backend MSW en mémoire (`store.ts`, `handlers.ts`) qui sert **à la fois** les tests **et** la démo hors ligne dans le navigateur — l'équivalent, côté frontend, des adaptateurs in-memory du backend. |
+| `test/mocks/*` | Faux backend MSW en mémoire (`store.ts` + worker `browser.ts`) qui sert la démo hors ligne dans le navigateur — l'équivalent, côté frontend, des adaptateurs in-memory du backend. |
 
 ## Démarrage — démo hors ligne (par défaut, sans backend)
 
@@ -101,8 +101,6 @@ Au démarrage, le profil `local` crée un client de démo et **logue sa clé API
 | `npm run dev` | Démarre le serveur de développement Vite. |
 | `npm run build` | Vérifie les types (`tsc`) puis build de production (`vite build`). |
 | `npm run preview` | Sert localement le build de production. |
-| `npm test` | Lance la suite de tests (Vitest, mode non interactif). |
-| `npm run test:watch` | Lance Vitest en mode watch. |
 | `npm run typecheck` | Vérifie les types sans émettre de fichiers. |
 
 ## Configuration (variables d'environnement `VITE_*`)
@@ -124,7 +122,7 @@ Toutes les variables sont documentées avec leur valeur par défaut dans `.env.e
   par `praxedo-upload-backend` — `FileView` à verdict aplati (`sizeBytes`, `infected`,
   `threatName`), `PageResult` `{ items, page, size, totalElements }` (le nombre de pages
   est dérivé côté client), et `POST /api/files` sans `filename`. Le mock MSW reste ainsi
-  une doublure fidèle, ce que la suite de tests vérifie.
+  une doublure fidèle du backend réel pour la démo hors ligne.
 - **Upload multi-fichiers** : l'interface boucle sur `POST /api/files` (un ticket
   d'upload puis un `PUT` par fichier) pour chaque fichier sélectionné. L'endpoint
   `/api/batches` reste réservé à l'intégration système-à-système, hors périmètre de

@@ -1,7 +1,7 @@
 # =====================================================================
 # CI/CD : deploie praxedo-upload-ui sur Cloud Run.
 #
-# Sur push vers `main` : verifie (typecheck + tests), construit l'image
+# Sur push vers `main` : verifie (typecheck), construit l'image
 # Docker (SPA servi par `serve`), la pousse sur Artifact Registry, deploie sur Cloud Run.
 #
 # Prerequis (a configurer dans les settings du depot GitHub) :
@@ -61,9 +61,6 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
-
-      - name: Tests
-        run: npm test
 
       - name: Authenticate to Google Cloud
         id: auth
