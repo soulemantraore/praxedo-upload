@@ -24,6 +24,9 @@ name: Deploy UI to Cloud Run
 on:
   push:
     branches: [main]
+    paths:
+      - 'praxedo-upload-ui/**'
+      - '.github/workflows/ui-deploy.yml'
   workflow_dispatch:
 
 concurrency:
@@ -36,6 +39,9 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: praxedo-upload-ui
     permissions:
       contents: read
       id-token: write   # requis pour Workload Identity Federation
@@ -48,6 +54,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: praxedo-upload-ui/package-lock.json
 
       - name: Install
         run: npm ci

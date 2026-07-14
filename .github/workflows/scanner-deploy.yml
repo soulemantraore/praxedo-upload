@@ -1,0 +1,60 @@
+# =====================================================================
+# CI/CD : build et deploie praxedo-upload-scanner (service AV prive) sur Cloud Run.
+#
+# Le scanner tourne avec un sidecar ClamAV (voir deploy/scanner-service.yaml).
+# Auth via Workload Identity Federation (pas de cle JSON longue duree).
+#
+#   Secrets   : GCP_WIF_PROVIDER, GCP_DEPLOY_SA
+#   Variables : GCP_PROJECT_ID, GCP_REGION
+#
+# NB : declenche MANUELLEMENT (workflow_dispatch) tant que le bootstrap GCP du
+# scanner (scanner-sa + iam, cf praxedo-upload-scanner/deploy/Makefile) n'a pas
+# ete execute une fois. Pour activer le deploiement automatique par push,
+# decommenter le bloc `push:` ci-dessous (path-filtered sur le sous-dossier).
+# =====================================================================
+name: Deploy Scanner to Cloud Run
+
+on:
+  # push:
+  #   branches: [ main ]
+  #   paths:
+  #     - 'praxedo-upload-scanner/**'
+  #     - '.github/workflows/scanner-deploy.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write   # requis pour Workload Identity Federation
+
+concurrency:
+  group: deploy-scanner-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: praxedo-upload-scanner/deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install envsubst (gettext)
+        run: sudo apt-get update && sudo apt-get install -y gettext-base
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build image and deploy scanner (with ClamAV sidecar)
+        run: |
+          make build-push deploy \
+            PROJECT_ID="${{ vars.GCP_PROJECT_ID }}" \
+            REGION="${{ vars.GCP_REGION }}" \
+            IMAGE_TAG="${{ github.sha }}"
