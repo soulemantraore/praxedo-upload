@@ -77,12 +77,12 @@ scanner-sa: ## Create the scanner runtime service account (idempotent).
 	  || gcloud iam service-accounts create $(SCANNER_SA_NAME) \
 	       --display-name="praxedo scanner runtime" --project=$(PROJECT_ID)
 
-build-push: ## Build the image with Cloud Build and push to Artifact Registry.
-	gcloud builds submit $(REPO_ROOT) --tag=$(IMAGE_URI) --project=$(PROJECT_ID)
-	# Local alternative (needs Docker + one-time auth):
+build-push: ## Build the image with Docker and push to Artifact Registry.
+	docker build -t $(IMAGE_URI) $(REPO_ROOT)
+	docker push $(IMAGE_URI)
+	# Docker must be authenticated to $(REGION)-docker.pkg.dev first.
+	# CI logs in via docker/login-action (WIF access token); locally, run once:
 	#   gcloud auth configure-docker $(REGION)-docker.pkg.dev
-	#   docker build -t $(IMAGE_URI) $(REPO_ROOT)
-	#   docker push $(IMAGE_URI)
 
 # Two containers (app + ClamAV sidecar), so deploy imperatively with the
 # multi-container `gcloud run deploy --container ...` syntax. Service-level flags
