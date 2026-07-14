@@ -77,8 +77,11 @@ scanner-sa: ## Create the scanner runtime service account (idempotent).
 	  || gcloud iam service-accounts create $(SCANNER_SA_NAME) \
 	       --display-name="praxedo scanner runtime" --project=$(PROJECT_ID)
 
+# --default-buckets-behavior routes Cloud Build logs to a regional user-owned
+# bucket so the WIF deploy SA can stream them; the default bucket needs project
+# Viewer/Owner and makes `gcloud builds submit` exit non-zero in CI.
 build-push: ## Build the image with Cloud Build and push to Artifact Registry.
-	gcloud builds submit $(REPO_ROOT) --tag=$(IMAGE_URI) --project=$(PROJECT_ID)
+	gcloud builds submit $(REPO_ROOT) --tag=$(IMAGE_URI) --project=$(PROJECT_ID) --default-buckets-behavior=regional-user-owned-bucket
 	# Local alternative (needs Docker + one-time auth):
 	#   gcloud auth configure-docker $(REGION)-docker.pkg.dev
 	#   docker build -t $(IMAGE_URI) $(REPO_ROOT)
