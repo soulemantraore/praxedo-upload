@@ -1,4 +1,4 @@
-package com.praxedo.upload.infrastructure.scan;
+package com.praxedo.upload.infrastructure.scan.gcp;
 
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.auth.oauth2.IdTokenCredentials;
