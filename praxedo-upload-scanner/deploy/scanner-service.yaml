@@ -1,0 +1,86 @@
+# =====================================================================
+# Cloud Run service: praxedo-scanner (PRIVATE)
+# Two containers:
+#   - app    : the FastAPI scanner. Receives POST /scan {gsUri}, streams the
+#              object from GCS and scans it via clamd, returns the verdict.
+#   - clamav : ClamAV daemon (clamd) on 127.0.0.1:3310. Loads a large signature
+#              database at startup -> min-instances=1, 2Gi.
+#
+# Private: ingress is internal and NO allUsers binding is created. Only the
+# worker service account is granted run.invoker (see deploy/Makefile), and it
+# calls with an OIDC token whose audience is this service's URL.
+#
+# Rendered by "make deploy" via envsubst, applied with
+# "gcloud run services replace". Placeholders: ${...}.
+#
+# Resource note: Cloud Run bills the SUM of all container limits. Here that is
+# 3 vCPU / ~2.5Gi (app 1/512Mi + clamav 2/2Gi).
+# =====================================================================
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ${SCANNER_SERVICE}
+  labels:
+    app: praxedo-upload
+    component: scanner
+  annotations:
+    run.googleapis.com/launch-stage: GA
+    run.googleapis.com/ingress: internal
+spec:
+  template:
+    metadata:
+      annotations:
+        # Keep one warm instance: reloading the ClamAV DB on every cold start
+        # would make scans slow and expensive.
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "5"
+        # CPU always allocated (warm clamd sidecar, in-request scan work).
+        run.googleapis.com/cpu-throttling: "false"
+        # Start the app only once clamd reports healthy.
+        run.googleapis.com/container-dependencies: '{"app":["clamav"]}'
+    spec:
+      serviceAccountName: ${SCANNER_SA}
+      # A large-file scan can be slow; keep this below the worker's HTTP read
+      # timeout, which is below the Pub/Sub push ack deadline.
+      timeoutSeconds: 550
+      containers:
+        # ---- Ingress container: the FastAPI scanner ----
+        - name: app
+          image: ${IMAGE_URI}
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: CLAMAV_HOST
+              value: "127.0.0.1"
+            - name: CLAMAV_PORT
+              value: "3310"
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 15
+            failureThreshold: 40
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 30
+        # ---- Sidecar: ClamAV daemon (clamd on 127.0.0.1:3310) ----
+        - name: clamav
+          image: ${CLAMAV_IMAGE}
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          # clamd only starts listening once the signature DB is loaded; give it
+          # generous time (up to ~10 min on a fresh freshclam download).
+          startupProbe:
+            tcpSocket:
+              port: 3310
+            periodSeconds: 15
+            failureThreshold: 40
