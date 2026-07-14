@@ -255,12 +255,12 @@ iam: ## Bind least-privilege IAM roles for both runtime service accounts.
 	  --role=roles/pubsub.publisher --project=$(PROJECT_ID)
 
 # ---------------------------------------------------------------------
-build-push: ## Build the image with Cloud Build and push to Artifact Registry.
-	gcloud builds submit $(REPO_ROOT) --tag=$(IMAGE_URI) --project=$(PROJECT_ID)
-	# Local alternative (needs Docker + one-time auth):
+build-push: ## Build the image with Docker and push to Artifact Registry.
+	docker build -t $(IMAGE_URI) $(REPO_ROOT)
+	docker push $(IMAGE_URI)
+	# Docker must be authenticated to $(REGION)-docker.pkg.dev first.
+	# CI logs in via docker/login-action (WIF access token); locally, run once:
 	#   gcloud auth configure-docker $(REGION)-docker.pkg.dev
-	#   docker build -t $(IMAGE_URI) $(REPO_ROOT)
-	#   docker push $(IMAGE_URI)
 
 # ---------------------------------------------------------------------
 # Both services are single-container (DB reached over TLS, no sidecar), so they
