@@ -1,0 +1,95 @@
+# =====================================================================
+# CI/CD : deploie praxedo-upload-ui sur Cloud Run.
+#
+# Sur push vers `main` : verifie (typecheck + tests), construit l'image
+# Docker (SPA servi par `serve`), la pousse sur Artifact Registry, deploie sur Cloud Run.
+#
+# Prerequis (a configurer dans les settings du depot GitHub) :
+#   Secrets  : GCP_WIF_PROVIDER  (Workload Identity Federation provider)
+#              GCP_DEPLOY_SA      (compte de service de deploiement, email)
+#              VITE_API_KEY       (cle API injectee au build)
+#   Variables: GCP_PROJECT_ID, GCP_REGION, ARTIFACT_REPO (defaut: praxedo)
+#              VITE_API_BASE_URL  (URL publique du backend api)
+#              VITE_PORTAL_NAME   (optionnel, defaut: Praxedo)
+#
+# NB : dans un SPA, VITE_API_KEY est inlinee dans le bundle cote navigateur
+# (contrainte inherente au client public). L'authentification humaine (OAuth)
+# est la piste d'evolution ; ici la cle reste machine-a-machine.
+#
+# WIF : le compte de deploiement a besoin de run.admin, iam.serviceAccountUser,
+# artifactregistry.writer sur le projet.
+# =====================================================================
+name: Deploy UI to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SERVICE: praxedo-ui
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # requis pour Workload Identity Federation
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        run: |
+          REPO="${{ vars.ARTIFACT_REPO || 'praxedo' }}"
+          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${REPO}/praxedo-upload-ui:${{ github.sha }}"
+          docker build \
+            --build-arg VITE_API_BASE_URL="${{ vars.VITE_API_BASE_URL }}" \
+            --build-arg VITE_API_KEY="${{ secrets.VITE_API_KEY }}" \
+            --build-arg VITE_PORTAL_NAME="${{ vars.VITE_PORTAL_NAME || 'Praxedo' }}" \
+            --build-arg VITE_USE_MOCK="false" \
+            -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image "$IMAGE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "${{ vars.GCP_REGION }}" \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8080
