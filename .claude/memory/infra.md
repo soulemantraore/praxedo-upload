@@ -1,6 +1,6 @@
 # Infra — outillage de déploiement GCP (PR #26 `task/infra-tooling`, backend)
 
-Outillage **prêt mais non exécuté** (aucun `gcloud`/`docker` lancé ; pas de projet GCP/auth disponible côté agent). gcloud + Makefile uniquement — **pas de Terraform** (décision D11). Un vrai déploiement nécessite que l'utilisateur fasse `gcloud auth login` puis `make`.
+Outillage gcloud + Makefile uniquement — **pas de Terraform** (décision D11). **Exécuté sur le projet `praxedo-upload-test`** (2026-07-15) : le service **UI est déployé et en ligne** (`https://praxedo-ui-7nj4c3y7jq-ew.a.run.app`) via `ui-deploy.yml`. Backend/scanner : infra partielle (SA runtime + WIF créés ; bucket/pubsub/secrets/DB restant à vérifier avant leur premier déploiement réussi). Voir la section **CI/CD — auth WIF** ci-dessous pour l'identité de déploiement.
 
 ## Topologie cible (Cloud Run) — 3 services (depuis D15, scanner externalisé)
 - **`api`** (public, `X-API-Key` vérifié dans l'app) : sert `/api/**`. **Mono-conteneur** (app seul ; DB Supabase en TLS direct depuis D17 → plus de sidecar).
@@ -33,6 +33,21 @@ Noms d'env du worker YAML = placeholders de `application-gcp.yml` : `GCS_BUCKET`
 
 ## À remplir avant déploiement réel
 `PROJECT_ID`, `REGION`, `UI_ORIGIN` (min.) ; `DB_PASSWORD` optionnel (auto-généré). CI : secrets `GCP_WIF_PROVIDER`/`GCP_DEPLOY_SA` + variables `GCP_PROJECT_ID`/`GCP_REGION`/`GCS_BUCKET`/`UI_ORIGIN`.
+
+## CI/CD — auth WIF (identité canonique + pièges, 2026-07-15)
+Le déploiement GitHub Actions s'authentifie à GCP par **Workload Identity Federation** (pas de clé JSON). **Valeurs canoniques** (à mettre dans les secrets GitHub du monorepo `soulemantraore/praxedo-upload`) :
+- `GCP_DEPLOY_SA` = `praxedo-deployer@praxedo-upload-test.iam.gserviceaccount.com` (a `artifactregistry.writer`, `run.admin`, `iam.serviceAccountUser`, `cloudbuild.builds.editor`, `pubsub.admin`, `storage.admin`).
+- `GCP_WIF_PROVIDER` = `projects/900523019258/locations/global/workloadIdentityPools/github-pool/providers/github-provider` (condition `assertion.repository_owner=='soulemantraore'` ; mappe `attribute.repository`).
+- Le SA `praxedo-deployer` doit avoir un binding `roles/iam.workloadIdentityUser` pour le **principalSet** `…/github-pool/attribute.repository/soulemantraore/praxedo-upload` (le **nom du monorepo**).
+
+**Pièges (dérive post-migration monorepo, tous rencontrés le 2026-07-15) :**
+- **Repo Artifact Registry `praxedo`** (docker, `europe-west1`) doit exister *avant* le 1er push (créé le 2026-07-14 ; sinon push refusé « (or it may not exist) »). Le crée `make -C praxedo-upload-backend/deploy bootstrap` (idempotent).
+- **`Gaia id not found for email`** au `docker push` = le secret `GCP_DEPLOY_SA` pointe un SA inexistant (souvent projet `praxedo-upload` au lieu de `praxedo-upload-test`).
+- **Binding WIF listant les anciens repos** `praxedo-upload-backend`/`-ui` au lieu du monorepo `praxedo-upload` → impersonation refusée. Ajouter le principalSet du monorepo.
+- En WIF, l'étape `auth` passe au **vert même si l'identité est cassée** (échange de jeton **paresseux**) : l'échec surgit au 1er appel réel (le `docker push`).
+- **Artefacts abandonnés à ignorer** : SA `github-deployment-sa` (aucun binding) et pool `praxedo-github-backend` (aucun provider) — tentatives incomplètes.
+
+**Build d'image — qui pousse quoi :** seul **`ui-deploy.yml`** fait un `docker build`/`docker push` **local** → durci avec `docker/login-action` + `token_format: access_token` (plus fiable que le helper `gcloud auth configure-docker`, source de push anonymes). **backend et scanner** passent par **Cloud Build** (`gcloud builds submit`, côté serveur) → pas de login Docker à gérer.
 
 ## Frontend — déploiement Cloud Run (PR #19 `task/frontend-deploy`, dépôt praxedo-upload-ui)
 - **Pas de nginx** (choix utilisateur) : image Docker **simple** multi-stage (build Vite → service statique par **`serve`** Node, repli SPA `-s`, écoute `$PORT`). Validé en local (`docker build` OK ; conteneur : `/` 200, route profonde → repli index.html 200).
