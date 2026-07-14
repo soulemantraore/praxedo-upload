@@ -58,9 +58,10 @@ L'application utilise le pilote JDBC PostgreSQL standard (TCP uniquement) et **l
 modifié** : elle se connecte **directement** à Supabase via la connection string `DB_URL`
 (`jdbc:postgresql://<projet>.pooler.supabase.com:5432/postgres?sslmode=require`). Plus de **Cloud SQL Auth
 Proxy** en sidecar ni de rôle `cloudsql.client` : la base est provisionnée **hors GCP** (dashboard Supabase),
-et le mot de passe est stocké dans **Secret Manager** (`make secrets DB_PASSWORD=...`). Les services restent
-décrits en **YAML Knative** (`api-service.yaml`, `worker-service.yaml`, appliqués via
-`gcloud run services replace`) pour porter la configuration d'environnement.
+et le mot de passe est stocké dans **Secret Manager** (`make secrets DB_PASSWORD=...`). Les deux services
+étant **mono-conteneur** (plus de sidecar), ils sont déployés **impérativement** via `gcloud run deploy` :
+variables d'environnement, secret, scaling, ingress et sonde de démarrage passent en **flags** (plus de
+manifeste Knative à rendre).
 
 > **Flyway** : utiliser le **session pooler** Supabase (`:5432`) ou une connexion **directe** pour les
 > migrations ; le **transaction pooler** (`:6543`) ne supporte pas toutes les fonctionnalités Flyway.
@@ -70,9 +71,7 @@ décrits en **YAML Knative** (`api-service.yaml`, `worker-service.yaml`, appliqu
 | Fichier | Rôle |
 |---|---|
 | `../Dockerfile` | Image multi-stage (build Maven/JDK 21 → runtime JRE 21), fat jar, port 8080. |
-| `Makefile` | Toutes les cibles gcloud paramétrées par variables (voir en tête du fichier). |
-| `api-service.yaml` | Manifeste Cloud Run du service `api` (app seul). Template `${...}` rendu par envsubst. |
-| `worker-service.yaml` | Manifeste Cloud Run du service `worker` (app seul ; appelle le scanner). |
+| `Makefile` | Toutes les cibles gcloud paramétrées par variables (voir en tête du fichier). Les services `api`/`worker` sont déployés via `gcloud run deploy` (flags), plus de manifeste Knative. |
 | `gcs-cors.json` | Politique CORS du bucket (PUT/GET depuis l'origine de l'UI). |
 | *(dépôt `praxedo-upload-scanner`)* | Le service `scanner` a son propre `deploy/` (manifeste + Makefile). |
 | `../.github/workflows/deploy.yml` | CI/CD : test + build + `make deploy` sur push `main` (WIF). |
@@ -81,7 +80,7 @@ décrits en **YAML Knative** (`api-service.yaml`, `worker-service.yaml`, appliqu
 
 - Un **projet GCP** avec la **facturation activée**.
 - `gcloud` installé et connecté : `gcloud auth login` puis `gcloud config set project <PROJECT_ID>`.
-- `make`, `envsubst` (paquet `gettext`) et `openssl` disponibles localement.
+- `make` et `openssl` disponibles localement.
 - Les images de build/déploiement s'exécutent côté GCP (Cloud Build) : **Docker n'est pas requis en local**.
 
 ## De zéro à déployé
@@ -178,7 +177,7 @@ et un endpoint d'administration ; hors périmètre de cet outillage.
   verrou côté Postgres : des démarrages concurrents sont sûrs (l'un attend l'autre).
 - **Coût** : le **worker** est désormais léger (`min-instances=0`, 1 vCPU / 1Gi = app seul, plus de proxy DB) et
   scale à zéro. La charge « chaude » (base de signatures ClamAV) est portée par le **scanner**
-  (`min-instances=1` + `cpu-throttling=false`, ~2Gi), ajustable dans son `scanner-service.yaml`.
+  (`min-instances=1` + `cpu-throttling=false`, ~2Gi), ajustable dans son `deploy/Makefile` (cible `deploy`).
 - **CI/CD** : le workflow suppose l'infra déjà provisionnée (étapes 1–3 ci-dessus faites une fois à la main) ;
   chaque push `main` ne fait que tester, builder et redéployer (`make deploy`). Secrets/variables requis :
   voir l'en-tête de `../.github/workflows/deploy.yml`.

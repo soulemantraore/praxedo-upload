@@ -17,21 +17,29 @@
 SHELL := /bin/bash
 
 # ---- Project / registry ----
-PROJECT_ID       ?= my-gcp-project
+PROJECT_ID       ?= praxedo-upload-test
 REGION           ?= europe-west1
 REPO             ?= praxedo
 IMAGE            ?= praxedo-upload-backend
 IMAGE_TAG        ?= latest
 
 # ---- Database: Supabase (managed Postgres, provisioned OUTSIDE GCP) ----
-# DB_URL = full Supabase JDBC string. Use the session pooler (:5432) or a direct
-# connection for Flyway (the :6543 transaction pooler lacks some Flyway features).
-DB_URL           ?= jdbc:postgresql://REPLACE-ME.pooler.supabase.com:5432/postgres?sslmode=require
+# DB_URL is composed from DB_HOST/DB_PORT/DB_NAME. Credentials stay OUT of the URL:
+# Spring reads them separately (datasource.username=DB_USER, datasource.password=
+# DB_PASSWORD); DB_USER is a plain env var and DB_PASSWORD comes from Secret Manager
+# (secret name = DB_SECRET_NAME).
+# NOTE: :6543 is the Supabase transaction pooler (PgBouncer); it lacks some Flyway
+# features. If migrations fail at startup, switch DB_PORT to 5432 (session pooler)
+# or use a direct connection.
+DB_HOST          ?= aws-0-eu-west-1.pooler.supabase.com
+DB_PORT          ?= 6543
+DB_NAME          ?= postgres
 DB_USER          ?= postgres
 DB_SECRET_NAME   ?= praxedo-db-password
+DB_URL           ?= jdbc:postgresql://$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=require
 
 # ---- GCS ----
-BUCKET           ?= $(PROJECT_ID)-praxedo-files
+BUCKET           ?= praxedo-files
 UI_ORIGIN        ?= https://your-ui-origin.example.com
 
 # ---- Pub/Sub ----
@@ -91,7 +99,7 @@ REPO_ROOT  := $(abspath $(DEPLOY_DIR)/..)
 .DEFAULT_GOAL := help
 
 .PHONY: help enable-apis bootstrap service-accounts secrets sql bucket pubsub iam \
-        infra build-push render-api render-worker deploy-api deploy-worker \
+        infra build-push deploy-api deploy-worker \
         pubsub-push deploy config cicd-setup cicd-values cicd-github
 
 # ---------------------------------------------------------------------
@@ -102,8 +110,8 @@ help: ## Show this help.
 	@echo "  bootstrap        Create the Artifact Registry Docker repository"
 	@echo "  infra            GCS(+CORS+notification) + Pub/Sub + SAs + IAM + secrets (DB = Supabase, externe)"
 	@echo "  build-push       Build the image with Cloud Build and push to Artifact Registry"
-	@echo "  deploy-api       Render + apply the api Cloud Run service"
-	@echo "  deploy-worker    Render + apply the worker Cloud Run service (single app container; calls the scanner)"
+	@echo "  deploy-api       Deploy the api Cloud Run service (gcloud run deploy)"
+	@echo "  deploy-worker    Deploy the worker Cloud Run service (gcloud run deploy; calls the scanner)"
 	@echo "  pubsub-push      Create the authenticated push subscription to the worker"
 	@echo "  deploy           build-push + deploy-api + deploy-worker + pubsub-push"
 	@echo ""
@@ -255,35 +263,40 @@ build-push: ## Build the image with Cloud Build and push to Artifact Registry.
 	#   docker push $(IMAGE_URI)
 
 # ---------------------------------------------------------------------
-# Render the Knative templates with envsubst (explicit variable allow-list so
-# nothing else in the YAML is accidentally expanded).
-render-api:
-	IMAGE_URI="$(IMAGE_URI)" API_SERVICE="$(API_SERVICE)" API_SA="$(API_SA)" \
-	GCP_PROJECT_ID="$(PROJECT_ID)" GCS_BUCKET="$(BUCKET)" PUBSUB_SCAN_TOPIC="$(TOPIC)" \
-	DB_URL="$(DB_URL)" DB_USER="$(DB_USER)" DB_SECRET_NAME="$(DB_SECRET_NAME)" \
-	  envsubst '$$IMAGE_URI $$API_SERVICE $$API_SA $$GCP_PROJECT_ID $$GCS_BUCKET $$PUBSUB_SCAN_TOPIC $$DB_URL $$DB_USER $$DB_SECRET_NAME' \
-	  < $(DEPLOY_DIR)/api-service.yaml > $(DEPLOY_DIR)/.api-service.rendered.yaml
+# Both services are single-container (DB reached over TLS, no sidecar), so they
+# deploy imperatively with `gcloud run deploy` -- no Knative YAML to render.
+# The env values carry no commas, so the default comma-delimited --set-env-vars
+# is safe. Cloud Run adds a default TCP startup probe on --port; we keep an
+# explicit one to preserve the generous 300s startup window (Spring Boot boot).
+deploy-api: ## Deploy the api Cloud Run service (public, X-API-Key enforced in-app).
+	# --allow-unauthenticated makes the endpoint public (grants allUsers the
+	# run.invoker role); the app still enforces the X-API-Key header itself.
+	gcloud run deploy $(API_SERVICE) \
+	  --image=$(IMAGE_URI) --region=$(REGION) --project=$(PROJECT_ID) \
+	  --service-account=$(API_SA) \
+	  --allow-unauthenticated --ingress=all \
+	  --port=8080 --cpu=1 --memory=512Mi \
+	  --min-instances=0 --max-instances=10 --timeout=60 \
+	  --labels=app=praxedo-upload,component=api \
+	  --startup-probe=tcpSocket.port=8080,periodSeconds=10,failureThreshold=30 \
+	  --set-env-vars=SPRING_PROFILES_ACTIVE=gcp,SERVER_PORT=8080,GCP_PROJECT_ID=$(PROJECT_ID),GCS_BUCKET=$(BUCKET),PUBSUB_SCAN_TOPIC=$(TOPIC),DB_URL=$(DB_URL),DB_USER=$(DB_USER) \
+	  --set-secrets=DB_PASSWORD=$(DB_SECRET_NAME):latest
 
-render-worker:
+deploy-worker: ## Deploy the worker Cloud Run service (calls the private scanner).
+	# The worker resolves SCANNER_URL from the deployed scanner: fail early if it
+	# is missing. Private service (--no-allow-unauthenticated); only the push SA
+	# is later granted run.invoker, by `make pubsub-push`.
 	@SU="$(SCANNER_URL)"; test -n "$$SU" || { echo "ERROR: scanner not deployed: $(SCANNER_SERVICE) has no URL. Deploy the praxedo-upload-scanner repo first."; exit 1; }; \
-	IMAGE_URI="$(IMAGE_URI)" WORKER_SERVICE="$(WORKER_SERVICE)" WORKER_SA="$(WORKER_SA)" \
-	GCP_PROJECT_ID="$(PROJECT_ID)" GCS_BUCKET="$(BUCKET)" PUBSUB_SCAN_TOPIC="$(TOPIC)" \
-	DB_URL="$(DB_URL)" DB_USER="$(DB_USER)" DB_SECRET_NAME="$(DB_SECRET_NAME)" \
-	SCANNER_URL="$$SU" SCANNER_AUDIENCE="$$SU" \
-	  envsubst '$$IMAGE_URI $$WORKER_SERVICE $$WORKER_SA $$GCP_PROJECT_ID $$GCS_BUCKET $$PUBSUB_SCAN_TOPIC $$DB_URL $$DB_USER $$DB_SECRET_NAME $$SCANNER_URL $$SCANNER_AUDIENCE' \
-	  < $(DEPLOY_DIR)/worker-service.yaml > $(DEPLOY_DIR)/.worker-service.rendered.yaml
-
-deploy-api: render-api ## Deploy the api Cloud Run service (public, X-API-Key enforced in-app).
-	gcloud run services replace $(DEPLOY_DIR)/.api-service.rendered.yaml \
-	  --region=$(REGION) --project=$(PROJECT_ID)
-	# Public endpoint: the app checks X-API-Key itself.
-	gcloud run services add-iam-policy-binding $(API_SERVICE) \
-	  --region=$(REGION) --member=allUsers \
-	  --role=roles/run.invoker --project=$(PROJECT_ID)
-
-deploy-worker: render-worker ## Deploy the worker Cloud Run service (single app container; calls the private scanner).
-	gcloud run services replace $(DEPLOY_DIR)/.worker-service.rendered.yaml \
-	  --region=$(REGION) --project=$(PROJECT_ID)
+	gcloud run deploy $(WORKER_SERVICE) \
+	  --image=$(IMAGE_URI) --region=$(REGION) --project=$(PROJECT_ID) \
+	  --service-account=$(WORKER_SA) \
+	  --no-allow-unauthenticated --ingress=all \
+	  --port=8080 --cpu=1 --memory=1Gi \
+	  --min-instances=0 --max-instances=5 --timeout=600 \
+	  --labels=app=praxedo-upload,component=worker \
+	  --startup-probe=tcpSocket.port=8080,periodSeconds=10,failureThreshold=30 \
+	  --set-env-vars=SPRING_PROFILES_ACTIVE=gcp,SERVER_PORT=8080,GCP_PROJECT_ID=$(PROJECT_ID),GCS_BUCKET=$(BUCKET),PUBSUB_SCAN_TOPIC=$(TOPIC),SCANNER_URL=$$SU,SCANNER_AUDIENCE=$$SU,SCANNER_OIDC_ENABLED=true,DB_URL=$(DB_URL),DB_USER=$(DB_USER) \
+	  --set-secrets=DB_PASSWORD=$(DB_SECRET_NAME):latest
 
 # ---------------------------------------------------------------------
 pubsub-push: ## Create/update the authenticated push subscription to the worker.

@@ -14,6 +14,12 @@
 #     GCP_REGION         e.g. europe-west1
 #     GCS_BUCKET         e.g. my-gcp-project-praxedo-files
 #     UI_ORIGIN          e.g. https://app.example.com
+#     DB_USER            Supabase user (the pooler user is usually
+#                        postgres.<project-ref>). Defaults to "postgres" if unset.
+#   NOTE: the DB host/port/name default to the Supabase pooler in deploy/Makefile
+#   (DB_HOST/DB_PORT/DB_NAME); DB_URL is composed from them. DB_PASSWORD is NOT set
+#   here -- it is read from Secret Manager at runtime (stored once by
+#   `DB_PASSWORD=... make infra`).
 #
 # The deploy SA needs: roles/run.admin, roles/iam.serviceAccountUser (to act as
 # the api/worker/push runtime SAs), roles/artifactregistry.writer,
@@ -73,9 +79,6 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Install envsubst (gettext)
-        run: sudo apt-get update && sudo apt-get install -y gettext-base
-
       - name: Build image and deploy to Cloud Run
         working-directory: praxedo-upload-backend/deploy
         run: |
@@ -84,4 +87,5 @@ jobs:
             REGION="$REGION" \
             IMAGE_TAG="${{ github.sha }}" \
             BUCKET="${{ vars.GCS_BUCKET }}" \
-            UI_ORIGIN="${{ vars.UI_ORIGIN }}"
+            UI_ORIGIN="${{ vars.UI_ORIGIN }}" \
+            DB_USER="${{ vars.DB_USER }}"

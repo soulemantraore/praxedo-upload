@@ -1,7 +1,7 @@
 # =====================================================================
 # CI/CD : build et deploie praxedo-upload-scanner (service AV prive) sur Cloud Run.
 #
-# Le scanner tourne avec un sidecar ClamAV (voir deploy/scanner-service.yaml).
+# Le scanner tourne avec un sidecar ClamAV (voir deploy/Makefile, cible `deploy`).
 # Auth via Workload Identity Federation (pas de cle JSON longue duree).
 #
 #   Secrets   : GCP_WIF_PROVIDER, GCP_DEPLOY_SA
@@ -39,9 +39,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install envsubst (gettext)
-        run: sudo apt-get update && sudo apt-get install -y gettext-base
 
       - name: Authenticate to Google Cloud (WIF)
         uses: google-github-actions/auth@v2

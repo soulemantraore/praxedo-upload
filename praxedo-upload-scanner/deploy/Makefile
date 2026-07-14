@@ -8,7 +8,7 @@
 # Order from zero to deployed:
 #   make scanner-sa        # once: create the scanner runtime service account
 #   make build-push        # build + push the scanner image
-#   make deploy            # render + apply the private Cloud Run service
+#   make deploy            # deploy the private Cloud Run service (app + ClamAV sidecar)
 #   make iam               # bucket read for the scanner + run.invoker for the worker
 #   make url               # print the deployed scanner URL (feed it to the worker)
 #
@@ -50,14 +50,14 @@ REPO_ROOT  := $(abspath $(DEPLOY_DIR)/..)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help config scanner-sa build-push render deploy iam url all
+.PHONY: help config scanner-sa build-push deploy iam url all
 
 help: ## Show this help.
 	@echo "praxedo-upload-scanner - GCP deployment targets:"
 	@echo ""
 	@echo "  scanner-sa    Create the scanner runtime service account"
 	@echo "  build-push    Build the image with Cloud Build and push to Artifact Registry"
-	@echo "  deploy        Render + apply the private scanner Cloud Run service"
+	@echo "  deploy        Deploy the private scanner Cloud Run service (app + ClamAV sidecar)"
 	@echo "  iam           Grant the scanner read on the bucket + the worker run.invoker on the scanner"
 	@echo "  url           Print the deployed scanner URL"
 	@echo "  all           scanner-sa + build-push + deploy + iam"
@@ -84,15 +84,27 @@ build-push: ## Build the image with Cloud Build and push to Artifact Registry.
 	#   docker build -t $(IMAGE_URI) $(REPO_ROOT)
 	#   docker push $(IMAGE_URI)
 
-render:
-	IMAGE_URI="$(IMAGE_URI)" SCANNER_SERVICE="$(SCANNER_SERVICE)" SCANNER_SA="$(SCANNER_SA)" \
-	CLAMAV_IMAGE="$(CLAMAV_IMAGE)" \
-	  envsubst '$$IMAGE_URI $$SCANNER_SERVICE $$SCANNER_SA $$CLAMAV_IMAGE' \
-	  < $(DEPLOY_DIR)/scanner-service.yaml > $(DEPLOY_DIR)/.scanner-service.rendered.yaml
-
-deploy: render ## Deploy the private scanner Cloud Run service.
-	gcloud run services replace $(DEPLOY_DIR)/.scanner-service.rendered.yaml \
-	  --region=$(REGION) --project=$(PROJECT_ID)
+# Two containers (app + ClamAV sidecar), so deploy imperatively with the
+# multi-container `gcloud run deploy --container ...` syntax. Service-level flags
+# come BEFORE the first --container; container-scoped flags follow their --container.
+#   - app depends on clamav (--depends-on): it starts only once clamd's TCP
+#     startup probe passes, so no scan hits a cold clamd.
+#   - CPU is always allocated (--no-cpu-throttling) and one instance stays warm
+#     (--min-instances=1) to keep the ClamAV signature DB loaded.
+deploy: ## Deploy the private scanner Cloud Run service (app + ClamAV sidecar).
+	gcloud run deploy $(SCANNER_SERVICE) \
+	  --region=$(REGION) --project=$(PROJECT_ID) \
+	  --service-account=$(SCANNER_SA) \
+	  --no-allow-unauthenticated --ingress=internal \
+	  --min-instances=1 --max-instances=5 --no-cpu-throttling --timeout=550 \
+	  --labels=app=praxedo-upload,component=scanner \
+	  --container=app --image=$(IMAGE_URI) --port=8080 --cpu=1 --memory=512Mi \
+	    --depends-on=clamav \
+	    --set-env-vars=CLAMAV_HOST=127.0.0.1,CLAMAV_PORT=3310 \
+	    --startup-probe=httpGet.path=/health,httpGet.port=8080,periodSeconds=15,failureThreshold=40 \
+	    --liveness-probe=httpGet.path=/health,httpGet.port=8080,periodSeconds=30 \
+	  --container=clamav --image=$(CLAMAV_IMAGE) --cpu=2 --memory=2Gi \
+	    --startup-probe=tcpSocket.port=3310,periodSeconds=15,failureThreshold=40
 
 iam: ## Bucket read-only for the scanner + run.invoker for the worker on this scanner.
 	# Scanner reads objects to scan (read-only; the worker keeps delete rights).
