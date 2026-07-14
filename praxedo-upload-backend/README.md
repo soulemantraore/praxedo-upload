@@ -23,14 +23,14 @@ Le domaine ne connaît ni Spring, ni GCS, ni le scanner : il ne dépend que de *
 
 ### Profils
 - **`local` / `test`** : adapters in-memory (repos), filesystem (`LocalFileStorage` + proxy HTTP simulant GCS), `FakeAntivirusScanner` (détecte la signature de test **EICAR** en lisant via `FileStorage`), scan en process. Tourne **sans aucune dépendance GCP**.
-- **`gcp`** : adapters réels, **profil démarrable de bout en bout** : `GcsFileStorage` (URLs signées V4), `JpaFileMetadataRepository`/`JpaApiClientRepository` (Cloud SQL/Postgres + Flyway), `RemoteScannerClient` (appel HTTP OIDC au **service scanner externe**), `PubSubScanQueue` + endpoint push `/internal/scan-events`. Requiert : credentials GCP (`GOOGLE_APPLICATION_CREDENTIALS`), un bucket, un topic, une base Postgres, et l'URL du scanner (`SCANNER_URL`/`SCANNER_AUDIENCE`, `SCANNER_OIDC_ENABLED`).
+- **`gcp`** : adapters réels, **profil démarrable de bout en bout** : `GcsFileStorage` (URLs signées V4), `JpaFileMetadataRepository`/`JpaApiClientRepository` (Supabase Postgres + Flyway), `RemoteScannerClient` (appel HTTP OIDC au **service scanner externe**), `PubSubScanQueue` + endpoint push `/internal/scan-events`. Requiert : credentials GCP (`GOOGLE_APPLICATION_CREDENTIALS`), un bucket, un topic, une base Postgres, et l'URL du scanner (`SCANNER_URL`/`SCANNER_AUDIENCE`, `SCANNER_OIDC_ENABLED`).
 
 ### Flux réel (profil gcp)
 ```
 Client → GCS (upload direct, URL signée)
 GCS "object finalize" → Pub/Sub → push /internal/scan-events → scan-worker
    scan-worker → POST {scanner}/scan {gsUri} (OIDC) → [scanner externe lit GCS + ClamAV]
-   scan-worker ← { infected, engine, threatName } → écrit le statut (Cloud SQL)
+   scan-worker ← { infected, engine, threatName } → écrit le statut (Supabase Postgres)
 Client → GET /content : URL signée de download uniquement si CLEAN
 ```
 Le scan vit dans un **service séparé** (repo `praxedo-upload-scanner`, Python + ClamAV) : le worker l'**appelle** via le port `AntivirusScanner` et écrit lui-même le verdict — le scanner ne touche jamais la base. Voir l'ADR **D15** (raffine la topologie sidecar de D6).

@@ -1,8 +1,8 @@
 # =====================================================================
 # praxedo-upload-backend - GCP deployment (Cloud Run, gcloud only)
 #
-# Topology: api (Cloud Run) + worker (Cloud Run, app + ClamAV + Cloud SQL
-# proxy sidecars) + Cloud SQL (Postgres) + GCS + Pub/Sub + Artifact Registry.
+# Topology: api (Cloud Run) + worker (Cloud Run) + scanner (separate repo) +
+# Supabase (managed Postgres, external) + GCS + Pub/Sub + Artifact Registry.
 #
 # Override any variable on the command line, e.g.:
 #   make deploy PROJECT_ID=my-proj REGION=europe-west1 IMAGE_TAG=$(git rev-parse --short HEAD)
@@ -23,12 +23,11 @@ REPO             ?= praxedo
 IMAGE            ?= praxedo-upload-backend
 IMAGE_TAG        ?= latest
 
-# ---- Cloud SQL (Postgres) ----
-DB_INSTANCE      ?= praxedo-sql
-DB_TIER          ?= db-custom-1-3840
-DB_VERSION       ?= POSTGRES_16
-DB_NAME          ?= praxedo
-DB_USER          ?= praxedo
+# ---- Database: Supabase (managed Postgres, provisioned OUTSIDE GCP) ----
+# DB_URL = full Supabase JDBC string. Use the session pooler (:5432) or a direct
+# connection for Flyway (the :6543 transaction pooler lacks some Flyway features).
+DB_URL           ?= jdbc:postgresql://REPLACE-ME.pooler.supabase.com:5432/postgres?sslmode=require
+DB_USER          ?= postgres
 DB_SECRET_NAME   ?= praxedo-db-password
 
 # ---- GCS ----
@@ -56,9 +55,9 @@ API_SA           := $(API_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
 WORKER_SA        := $(WORKER_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
 PUSH_SA          := $(PUSH_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
 
-# ---- Sidecar images ----
-# ClamAV now lives in the separate scanner service, not the worker.
-PROXY_IMAGE      ?= gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
+# ---- Sidecars ----
+# None: ClamAV moved to the separate scanner service, and Supabase is reached
+# directly over TLS (no Cloud SQL Auth Proxy).
 
 # ---- CI/CD : Workload Identity Federation + deploy service account ----
 # Shared by BOTH repos (backend + frontend) : one WIF provider, one deploy SA.
@@ -76,7 +75,6 @@ space            := $(empty) $(empty)
 
 # ---- Derived (deterministic; no gcloud call needed) ----
 IMAGE_URI            := $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO)/$(IMAGE):$(IMAGE_TAG)
-SQL_CONNECTION_NAME  := $(PROJECT_ID):$(REGION):$(DB_INSTANCE)
 
 # ---- Derived (resolved lazily, only inside recipes that need them) ----
 PROJECT_NUMBER  = $(shell gcloud projects describe $(PROJECT_ID) --format='value(projectNumber)')
@@ -102,10 +100,10 @@ help: ## Show this help.
 	@echo ""
 	@echo "  enable-apis      Enable the required Google Cloud APIs"
 	@echo "  bootstrap        Create the Artifact Registry Docker repository"
-	@echo "  infra            Cloud SQL + GCS(+CORS+notification) + Pub/Sub + SAs + IAM + secrets"
+	@echo "  infra            GCS(+CORS+notification) + Pub/Sub + SAs + IAM + secrets (DB = Supabase, externe)"
 	@echo "  build-push       Build the image with Cloud Build and push to Artifact Registry"
 	@echo "  deploy-api       Render + apply the api Cloud Run service"
-	@echo "  deploy-worker    Render + apply the worker Cloud Run service (app + Cloud SQL proxy; calls the scanner)"
+	@echo "  deploy-worker    Render + apply the worker Cloud Run service (single app container; calls the scanner)"
 	@echo "  pubsub-push      Create the authenticated push subscription to the worker"
 	@echo "  deploy           build-push + deploy-api + deploy-worker + pubsub-push"
 	@echo ""
@@ -124,7 +122,7 @@ config: ## Print the resolved configuration.
 	@echo "PROJECT_ID          = $(PROJECT_ID)"
 	@echo "REGION              = $(REGION)"
 	@echo "IMAGE_URI           = $(IMAGE_URI)"
-	@echo "SQL_CONNECTION_NAME = $(SQL_CONNECTION_NAME)"
+	@echo "DB_URL              = $(DB_URL)"
 	@echo "BUCKET              = $(BUCKET)"
 	@echo "TOPIC / DLQ / SUB   = $(TOPIC) / $(DLQ) / $(SUBSCRIPTION)"
 	@echo "API_SERVICE         = $(API_SERVICE)  (SA: $(API_SA))"
@@ -137,7 +135,6 @@ enable-apis: ## Enable required Google Cloud APIs.
 	  run.googleapis.com \
 	  cloudbuild.googleapis.com \
 	  artifactregistry.googleapis.com \
-	  sqladmin.googleapis.com \
 	  pubsub.googleapis.com \
 	  storage.googleapis.com \
 	  secretmanager.googleapis.com \
@@ -158,7 +155,6 @@ bootstrap: ## Create the Artifact Registry Docker repository.
 infra: ## Provision all infrastructure (idempotent-friendly).
 	$(MAKE) service-accounts
 	$(MAKE) secrets
-	$(MAKE) sql
 	$(MAKE) bucket
 	$(MAKE) pubsub
 	$(MAKE) iam
@@ -171,26 +167,16 @@ service-accounts: ## Create the api / worker / push service accounts.
 	gcloud iam service-accounts create $(PUSH_SA_NAME) \
 	  --display-name="praxedo pubsub push (OIDC)" --project=$(PROJECT_ID) || true
 
-secrets: ## Create the DB password secret (value from DB_PASSWORD or auto-generated).
+secrets: ## Store the Supabase DB password in Secret Manager (pass DB_PASSWORD=... from the Supabase dashboard).
+	@test -n "$$DB_PASSWORD" || { echo "ERROR: set DB_PASSWORD to your Supabase database password (Project Settings > Database)"; exit 1; }
 	gcloud secrets create $(DB_SECRET_NAME) \
 	  --replication-policy=automatic --project=$(PROJECT_ID) || true
-	@PW="$${DB_PASSWORD:-$$(openssl rand -base64 24)}"; \
-	 printf '%s' "$$PW" | gcloud secrets versions add $(DB_SECRET_NAME) \
+	@printf '%s' "$$DB_PASSWORD" | gcloud secrets versions add $(DB_SECRET_NAME) \
 	   --data-file=- --project=$(PROJECT_ID); \
-	 echo "DB password stored in Secret Manager secret '$(DB_SECRET_NAME)' (latest)."
+	 echo "Supabase DB password stored in Secret Manager secret '$(DB_SECRET_NAME)' (latest)."
 
-sql: ## Create the Cloud SQL instance, database and user.
-	gcloud sql instances create $(DB_INSTANCE) \
-	  --database-version=$(DB_VERSION) \
-	  --tier=$(DB_TIER) \
-	  --region=$(REGION) \
-	  --project=$(PROJECT_ID) || true
-	gcloud sql databases create $(DB_NAME) \
-	  --instance=$(DB_INSTANCE) --project=$(PROJECT_ID) || true
-	gcloud sql users create $(DB_USER) \
-	  --instance=$(DB_INSTANCE) \
-	  --password="$$(gcloud secrets versions access latest --secret=$(DB_SECRET_NAME) --project=$(PROJECT_ID))" \
-	  --project=$(PROJECT_ID) || true
+# Supabase is provisioned outside GCP (dashboard) -> no "sql" target here:
+# store the password with "make secrets" and set DB_URL.
 
 bucket: ## Create the GCS bucket and apply the CORS policy for browser signed URLs.
 	gcloud storage buckets create gs://$(BUCKET) \
@@ -218,7 +204,7 @@ pubsub: ## Create the scan topic + DLQ and wire the GCS OBJECT_FINALIZE notifica
 
 iam: ## Bind least-privilege IAM roles for both runtime service accounts.
 	# --- api: sign V4 URLs (signBlob on itself), publish scans, object metadata,
-	#     Cloud SQL, read the DB secret.
+	#     read the DB secret (Supabase reached over TLS, no Cloud SQL IAM).
 	gcloud iam service-accounts add-iam-policy-binding $(API_SA) \
 	  --member="serviceAccount:$(API_SA)" \
 	  --role=roles/iam.serviceAccountTokenCreator --project=$(PROJECT_ID)
@@ -228,17 +214,13 @@ iam: ## Bind least-privilege IAM roles for both runtime service accounts.
 	gcloud pubsub topics add-iam-policy-binding $(TOPIC) \
 	  --member="serviceAccount:$(API_SA)" \
 	  --role=roles/pubsub.publisher --project=$(PROJECT_ID)
-	gcloud projects add-iam-policy-binding $(PROJECT_ID) \
-	  --member="serviceAccount:$(API_SA)" --role=roles/cloudsql.client
 	gcloud secrets add-iam-policy-binding $(DB_SECRET_NAME) \
 	  --member="serviceAccount:$(API_SA)" \
 	  --role=roles/secretmanager.secretAccessor --project=$(PROJECT_ID)
-	# --- worker: read/delete objects, Cloud SQL, read the DB secret.
+	# --- worker: read/delete objects, read the DB secret (Supabase over TLS).
 	gcloud storage buckets add-iam-policy-binding gs://$(BUCKET) \
 	  --member="serviceAccount:$(WORKER_SA)" \
 	  --role=roles/storage.objectAdmin --project=$(PROJECT_ID)
-	gcloud projects add-iam-policy-binding $(PROJECT_ID) \
-	  --member="serviceAccount:$(WORKER_SA)" --role=roles/cloudsql.client
 	gcloud secrets add-iam-policy-binding $(DB_SECRET_NAME) \
 	  --member="serviceAccount:$(WORKER_SA)" \
 	  --role=roles/secretmanager.secretAccessor --project=$(PROJECT_ID)
@@ -264,19 +246,17 @@ build-push: ## Build the image with Cloud Build and push to Artifact Registry.
 render-api:
 	IMAGE_URI="$(IMAGE_URI)" API_SERVICE="$(API_SERVICE)" API_SA="$(API_SA)" \
 	GCP_PROJECT_ID="$(PROJECT_ID)" GCS_BUCKET="$(BUCKET)" PUBSUB_SCAN_TOPIC="$(TOPIC)" \
-	DB_NAME="$(DB_NAME)" DB_USER="$(DB_USER)" DB_SECRET_NAME="$(DB_SECRET_NAME)" \
-	SQL_CONNECTION_NAME="$(SQL_CONNECTION_NAME)" PROXY_IMAGE="$(PROXY_IMAGE)" \
-	  envsubst '$$IMAGE_URI $$API_SERVICE $$API_SA $$GCP_PROJECT_ID $$GCS_BUCKET $$PUBSUB_SCAN_TOPIC $$DB_NAME $$DB_USER $$DB_SECRET_NAME $$SQL_CONNECTION_NAME $$PROXY_IMAGE' \
+	DB_URL="$(DB_URL)" DB_USER="$(DB_USER)" DB_SECRET_NAME="$(DB_SECRET_NAME)" \
+	  envsubst '$$IMAGE_URI $$API_SERVICE $$API_SA $$GCP_PROJECT_ID $$GCS_BUCKET $$PUBSUB_SCAN_TOPIC $$DB_URL $$DB_USER $$DB_SECRET_NAME' \
 	  < $(DEPLOY_DIR)/api-service.yaml > $(DEPLOY_DIR)/.api-service.rendered.yaml
 
 render-worker:
 	@SU="$(SCANNER_URL)"; test -n "$$SU" || { echo "ERROR: scanner not deployed: $(SCANNER_SERVICE) has no URL. Deploy the praxedo-upload-scanner repo first."; exit 1; }; \
 	IMAGE_URI="$(IMAGE_URI)" WORKER_SERVICE="$(WORKER_SERVICE)" WORKER_SA="$(WORKER_SA)" \
 	GCP_PROJECT_ID="$(PROJECT_ID)" GCS_BUCKET="$(BUCKET)" PUBSUB_SCAN_TOPIC="$(TOPIC)" \
-	DB_NAME="$(DB_NAME)" DB_USER="$(DB_USER)" DB_SECRET_NAME="$(DB_SECRET_NAME)" \
-	SQL_CONNECTION_NAME="$(SQL_CONNECTION_NAME)" PROXY_IMAGE="$(PROXY_IMAGE)" \
+	DB_URL="$(DB_URL)" DB_USER="$(DB_USER)" DB_SECRET_NAME="$(DB_SECRET_NAME)" \
 	SCANNER_URL="$$SU" SCANNER_AUDIENCE="$$SU" \
-	  envsubst '$$IMAGE_URI $$WORKER_SERVICE $$WORKER_SA $$GCP_PROJECT_ID $$GCS_BUCKET $$PUBSUB_SCAN_TOPIC $$DB_NAME $$DB_USER $$DB_SECRET_NAME $$SQL_CONNECTION_NAME $$PROXY_IMAGE $$SCANNER_URL $$SCANNER_AUDIENCE' \
+	  envsubst '$$IMAGE_URI $$WORKER_SERVICE $$WORKER_SA $$GCP_PROJECT_ID $$GCS_BUCKET $$PUBSUB_SCAN_TOPIC $$DB_URL $$DB_USER $$DB_SECRET_NAME $$SCANNER_URL $$SCANNER_AUDIENCE' \
 	  < $(DEPLOY_DIR)/worker-service.yaml > $(DEPLOY_DIR)/.worker-service.rendered.yaml
 
 deploy-api: render-api ## Deploy the api Cloud Run service (public, X-API-Key enforced in-app).
@@ -287,7 +267,7 @@ deploy-api: render-api ## Deploy the api Cloud Run service (public, X-API-Key en
 	  --region=$(REGION) --member=allUsers \
 	  --role=roles/run.invoker --project=$(PROJECT_ID)
 
-deploy-worker: render-worker ## Deploy the worker Cloud Run service (app + Cloud SQL proxy; calls the private scanner).
+deploy-worker: render-worker ## Deploy the worker Cloud Run service (single app container; calls the private scanner).
 	gcloud run services replace $(DEPLOY_DIR)/.worker-service.rendered.yaml \
 	  --region=$(REGION) --project=$(PROJECT_ID)
 

@@ -17,12 +17,11 @@ worker, choisis au runtime par le profil Spring `gcp`). Le **scan** vit dans un 
 │  Cloud Run: api  │────────────────────────┐                         │ push (OIDC)
 │  (public)        │                        ▼                         ▼
 │  - app           │              ┌─────────────────────────────────────────────┐
-│  - cloud-sql-    │              │  Cloud Run: worker (privé, scale-to-zero)    │
-│    proxy sidecar │              │  - app  POST /internal/scan-events           │
-└────────┬─────────┘              │  - cloud-sql-proxy sidecar                   │
-         │                        └──────┬────────────────────────────┬─────────┘
-         │ 127.0.0.1:5432                │ HTTP POST /scan {gsUri}     │ 127.0.0.1:5432
-         │                               │ (OIDC, run.invoker)         │
+│                  │              │  Cloud Run: worker (privé, scale-to-zero)    │
+│                  │              │  - app  POST /internal/scan-events           │
+└────────┬─────────┘              └──────┬────────────────────────────┬─────────┘
+         │                               │ HTTP POST /scan {gsUri}     │
+         │ JDBC / TLS                    │ (OIDC, run.invoker)         │ JDBC / TLS
          │            ┌──────────────────▼─────────────────────┐       │
          │            │  Cloud Run: scanner (privé)             │       │
          │            │  - app FastAPI  → { infected, ... }     │       │
@@ -30,8 +29,8 @@ worker, choisis au runtime par le profil Spring `gcp`). Le **scan** vit dans un 
          │            │    min-instances=1 (signatures chaudes) │       │
          │            └─────────────────────────────────────────┘       │
          ▼                                                              ▼
-   ┌───────────────────────────  Cloud SQL (PostgreSQL)  ───────────────────────────┐
-   │  JPA + Flyway (migrations au démarrage)                                          │
+   ┌────────────────────  Supabase (PostgreSQL managé, externe à GCP)  ──────────────┐
+   │  JDBC + Flyway (migrations au démarrage), sslmode=require                        │
    └─────────────────────────────────────────────────────────────────────────────────┘
 
 Dead-letter : Pub/Sub topic scan-requests-dlq (après MAX_ATTEMPTS livraisons).
@@ -41,10 +40,10 @@ Artifact Registry : dépôt Docker des images (backend + scanner).
 
 - **`api`** (public) : sert `/api/**`. L'authentification se fait **dans l'application** via l'en-tête
   `X-API-Key` ; le service Cloud Run est ouvert (`allUsers` → `run.invoker`). Génère les URLs signées V4
-  (upload/download), publie les demandes de rescan sur Pub/Sub, lit/écrit les métadonnées en Cloud SQL.
+  (upload/download), publie les demandes de rescan sur Pub/Sub, lit/écrit les métadonnées dans **Supabase**.
 - **`worker`** (privé, **léger**) : reçoit le push Pub/Sub sur `POST /internal/scan-events`, **appelle le
-  scanner** en HTTP (`POST /scan {gsUri}`, jeton OIDC) et écrit le verdict renvoyé en Cloud SQL. Plus de
-  ClamAV ici → `min-instances=0` (scale-to-zero), 2 conteneurs (app + Cloud SQL proxy).
+  scanner** en HTTP (`POST /scan {gsUri}`, jeton OIDC) et écrit le verdict renvoyé dans **Supabase**. Plus de
+  ClamAV ni de proxy DB ici → `min-instances=0` (scale-to-zero), **1 conteneur** (app seul).
 - **`scanner`** (privé, dépôt `praxedo-upload-scanner`) : `POST /scan {gsUri}` → lit l'objet depuis GCS →
   ClamAV → renvoie `{ infected, engine, threatName }`. `min-instances=1` (~2Gi) car ClamAV charge sa base
   de signatures. **N'écrit jamais en base** ; seul le worker le fait (voir ADR **D15**).
@@ -53,14 +52,18 @@ Le même topic `scan-requests` transporte **deux** formes de message, toutes deu
 `/internal/scan-events` : la notification GCS `OBJECT_FINALIZE` (attribut `objectId` = storageKey,
 auto-trigger après upload) et le message applicatif de rescan (`data` = fileId en base64).
 
-### Pourquoi un sidecar Cloud SQL Auth Proxy (et deux manifestes YAML)
+### Base de données : Supabase (Postgres managé, externe à GCP)
 
 L'application utilise le pilote JDBC PostgreSQL standard (TCP uniquement) et **le code source n'est pas
-modifié**. Plutôt que d'ajouter la `SocketFactory` Cloud SQL au pom, chaque service embarque le
-**Cloud SQL Auth Proxy** en sidecar : il expose Postgres en TCP sur `127.0.0.1:5432`, authentifié par IAM
-(`roles/cloudsql.client`). L'app se connecte donc à `jdbc:postgresql://127.0.0.1:5432/<db>` sans changement
-de code. Comme les deux services sont multi-conteneurs, ils sont décrits en **YAML Knative**
-(`api-service.yaml`, `worker-service.yaml`) et appliqués via `gcloud run services replace`.
+modifié** : elle se connecte **directement** à Supabase via la connection string `DB_URL`
+(`jdbc:postgresql://<projet>.pooler.supabase.com:5432/postgres?sslmode=require`). Plus de **Cloud SQL Auth
+Proxy** en sidecar ni de rôle `cloudsql.client` : la base est provisionnée **hors GCP** (dashboard Supabase),
+et le mot de passe est stocké dans **Secret Manager** (`make secrets DB_PASSWORD=...`). Les services restent
+décrits en **YAML Knative** (`api-service.yaml`, `worker-service.yaml`, appliqués via
+`gcloud run services replace`) pour porter la configuration d'environnement.
+
+> **Flyway** : utiliser le **session pooler** Supabase (`:5432`) ou une connexion **directe** pour les
+> migrations ; le **transaction pooler** (`:6543`) ne supporte pas toutes les fonctionnalités Flyway.
 
 ## Fichiers
 
@@ -68,8 +71,8 @@ de code. Comme les deux services sont multi-conteneurs, ils sont décrits en **Y
 |---|---|
 | `../Dockerfile` | Image multi-stage (build Maven/JDK 21 → runtime JRE 21), fat jar, port 8080. |
 | `Makefile` | Toutes les cibles gcloud paramétrées par variables (voir en tête du fichier). |
-| `api-service.yaml` | Manifeste Cloud Run du service `api` (app + proxy). Template `${...}` rendu par envsubst. |
-| `worker-service.yaml` | Manifeste Cloud Run du service `worker` (app + Cloud SQL proxy ; appelle le scanner). |
+| `api-service.yaml` | Manifeste Cloud Run du service `api` (app seul). Template `${...}` rendu par envsubst. |
+| `worker-service.yaml` | Manifeste Cloud Run du service `worker` (app seul ; appelle le scanner). |
 | `gcs-cors.json` | Politique CORS du bucket (PUT/GET depuis l'origine de l'UI). |
 | *(dépôt `praxedo-upload-scanner`)* | Le service `scanner` a son propre `deploy/` (manifeste + Makefile). |
 | `../.github/workflows/deploy.yml` | CI/CD : test + build + `make deploy` sur push `main` (WIF). |
@@ -100,10 +103,12 @@ make enable-apis PROJECT_ID=$PROJECT_ID
 # 2) Créer le dépôt Artifact Registry (une fois)
 make bootstrap PROJECT_ID=$PROJECT_ID REGION=$REGION
 
-# 3) Provisionner l'infra (Cloud SQL, GCS+CORS+notification, Pub/Sub topic+DLQ,
-#    comptes de service, IAM, secret du mot de passe DB).
-#    DB_PASSWORD est optionnel : généré aléatoirement et stocké dans Secret Manager si absent.
-DB_PASSWORD='choisir-un-mot-de-passe' \
+# 3) Provisionner l'infra GCP (GCS+CORS+notification, Pub/Sub topic+DLQ,
+#    comptes de service, IAM, secret du mot de passe DB). La base Supabase est
+#    provisionnée HORS GCP (dashboard Supabase). Renseigner aussi DB_URL (connection
+#    string Supabase) au moment du déploiement des services (make deploy).
+#    DB_PASSWORD = mot de passe Supabase, REQUIS (stocké dans Secret Manager).
+DB_PASSWORD='mot-de-passe-supabase' \
   make infra PROJECT_ID=$PROJECT_ID REGION=$REGION UI_ORIGIN=$UI_ORIGIN
 
 # 4) Déployer le SCANNER d'abord (dépôt praxedo-upload-scanner), car le worker
@@ -171,7 +176,7 @@ et un endpoint d'administration ; hors périmètre de cet outillage.
 
 - **Flyway** s'exécute au démarrage des deux services (même image, profil `gcp`). Les migrations prennent un
   verrou côté Postgres : des démarrages concurrents sont sûrs (l'un attend l'autre).
-- **Coût** : le **worker** est désormais léger (`min-instances=0`, 2 vCPU / 2Gi = app + Cloud SQL proxy) et
+- **Coût** : le **worker** est désormais léger (`min-instances=0`, 1 vCPU / 1Gi = app seul, plus de proxy DB) et
   scale à zéro. La charge « chaude » (base de signatures ClamAV) est portée par le **scanner**
   (`min-instances=1` + `cpu-throttling=false`, ~2Gi), ajustable dans son `scanner-service.yaml`.
 - **CI/CD** : le workflow suppose l'infra déjà provisionnée (étapes 1–3 ci-dessus faites une fois à la main) ;

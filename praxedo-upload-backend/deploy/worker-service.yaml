@@ -1,14 +1,17 @@
 # =====================================================================
 # Cloud Run service: praxedo-worker
-# Two containers:
-#   - app             : the Spring Boot application (profile gcp).
-#                       Receives the Pub/Sub push at /internal/scan-events, then
-#                       calls the private scanner service over HTTP (OIDC) with
-#                       the object's gs:// URI, and writes the verdict it returns
-#                       to Cloud SQL. The worker never scans bytes itself.
-#   - cloud-sql-proxy : Cloud SQL Auth Proxy, Postgres on localhost:5432.
+# Single container:
+#   - app : the Spring Boot application (profile gcp).
+#           Receives the Pub/Sub push at /internal/scan-events, then calls the
+#           private scanner service over HTTP (OIDC) with the object's gs:// URI,
+#           and writes the verdict it returns to the database. The worker never
+#           scans bytes itself.
 #
-# ClamAV no longer lives here: scanning moved to the separate praxedo-scanner
+# Database: Supabase (managed Postgres) reached directly over TLS with the stock
+# PostgreSQL JDBC driver (DB_URL carries the host + sslmode=require). No Cloud SQL
+# Auth Proxy sidecar is needed anymore.
+#
+# ClamAV no longer lives here either: scanning moved to the separate praxedo-scanner
 # service. The worker is therefore light and may scale to zero.
 #
 # The worker is NOT public: ingress is open so Pub/Sub can reach it over the
@@ -18,8 +21,7 @@
 # Rendered by "make deploy-worker" via envsubst, applied with
 # "gcloud run services replace". Placeholders: ${...}.
 #
-# Resource note: Cloud Run bills the SUM of all container limits. Here that is
-# 2 vCPU / 2Gi (app 1/1Gi + proxy 1/1Gi).
+# Resource note: single app container, 1 vCPU / 1Gi.
 # =====================================================================
 apiVersion: serving.knative.dev/v1
 kind: Service
@@ -39,8 +41,6 @@ spec:
         # the worker can scale to zero. Cold starts are absorbed by Pub/Sub retries.
         autoscaling.knative.dev/minScale: "0"
         autoscaling.knative.dev/maxScale: "5"
-        # Start the app only once the Cloud SQL proxy reports healthy.
-        run.googleapis.com/container-dependencies: '{"app":["cloud-sql-proxy"]}'
     spec:
       serviceAccountName: ${WORKER_SA}
       # A remote scan can be slow; keep this >= the scanner read-timeout and
@@ -73,7 +73,7 @@ spec:
             - name: SCANNER_OIDC_ENABLED
               value: "true"
             - name: DB_URL
-              value: jdbc:postgresql://127.0.0.1:5432/${DB_NAME}
+              value: ${DB_URL}
             - name: DB_USER
               value: ${DB_USER}
             - name: DB_PASSWORD
@@ -94,19 +94,3 @@ spec:
             tcpSocket:
               port: 8080
             periodSeconds: 30
-        # ---- Sidecar: Cloud SQL Auth Proxy (localhost:5432) ----
-        - name: cloud-sql-proxy
-          image: ${PROXY_IMAGE}
-          args:
-            - "--port=5432"
-            - "--address=127.0.0.1"
-            - "${SQL_CONNECTION_NAME}"
-          resources:
-            limits:
-              cpu: "1"
-              memory: 1Gi
-          startupProbe:
-            tcpSocket:
-              port: 5432
-            periodSeconds: 10
-            failureThreshold: 30

@@ -443,7 +443,7 @@
             <div class="who">Adapters reels &mdash; production sur Google Cloud</div>
             <div class="maprow">
               <div class="impl"><b>GcsFileStorage</b> &rarr; FileStorage</div>
-              <div class="impl"><b>Jpa*Repository</b> (Cloud SQL) &rarr; les 2 repos</div>
+              <div class="impl"><b>Jpa*Repository</b> (Supabase) &rarr; les 2 repos</div>
               <div class="impl"><b>RemoteScannerClient</b> &rarr; AntivirusScanner</div>
               <div class="impl"><b>PubSubScanQueue</b> &rarr; ScanQueue</div>
               <div class="impl"><b>UuidIdGenerator</b> &rarr; IdGenerator</div>
@@ -528,8 +528,8 @@
         </thead>
         <tbody>
           <tr><td class="mono">FileStorage</td><td><span class="mono">LocalFileStorage</span> (disque + proxy)</td><td><span class="mono">GcsFileStorage</span> (URLs signees V4)</td></tr>
-          <tr><td class="mono">FileMetadataRepository</td><td><span class="mono">InMemoryFileMetadataRepository</span></td><td><span class="mono">JpaFileMetadataRepository</span> (Cloud SQL)</td></tr>
-          <tr><td class="mono">ApiClientRepository</td><td><span class="mono">InMemoryApiClientRepository</span></td><td><span class="mono">JpaApiClientRepository</span> (Cloud SQL)</td></tr>
+          <tr><td class="mono">FileMetadataRepository</td><td><span class="mono">InMemoryFileMetadataRepository</span></td><td><span class="mono">JpaFileMetadataRepository</span> (Supabase)</td></tr>
+          <tr><td class="mono">ApiClientRepository</td><td><span class="mono">InMemoryApiClientRepository</span></td><td><span class="mono">JpaApiClientRepository</span> (Supabase)</td></tr>
           <tr><td class="mono">AntivirusScanner</td><td><span class="mono">FakeAntivirusScanner</span> (detecte EICAR)</td><td><span class="mono">RemoteScannerClient</span> (scanner HTTP + ClamAV)</td></tr>
           <tr><td class="mono">ScanQueue</td><td><span class="mono">SynchronousScanQueue</span> (test) / <span class="mono">InProcessScanQueue</span> (local)</td><td><span class="mono">PubSubScanQueue</span> (+ DLQ)</td></tr>
           <tr><td class="mono">IdGenerator</td><td colspan="2"><span class="mono">UuidIdGenerator</span> &mdash; commun aux trois profils</td></tr>
@@ -553,7 +553,7 @@
       de service. Le scanner est un service autonome (depot separe) ; il ne touche jamais la base.</p>
 
     <div class="figure" style="margin-top:20px" role="img"
-         aria-label="Topologie : le navigateur parle au service api et depose sur GCS ; GCS notifie Pub/Sub qui pousse vers le worker ; les deux services partagent Cloud SQL.">
+         aria-label="Topologie : le navigateur parle au service api et depose sur GCS ; GCS notifie Pub/Sub qui pousse vers le worker ; les deux services partagent la base Supabase (Postgres).">
       <div class="topo">
 
         <div class="topo-row r3">
@@ -566,7 +566,6 @@
             <p>Sert /api/** (public, X-API-Key verifie dans l'app). Signe les URLs, publie les demandes de scan.</p>
             <div class="containers">
               <div class="ctn"><span class="dot app"></span> app (profil gcp)</div>
-              <div class="ctn"><span class="dot db"></span> Cloud SQL Auth Proxy</div>
             </div>
           </div>
           <div class="svc run">
@@ -574,7 +573,6 @@
             <p>Recoit le push Pub/Sub sur /internal/scan-events, appelle le scanner (HTTP, OIDC) et ecrit le verdict. Leger : min-instances=0 (scale-to-zero).</p>
             <div class="containers">
               <div class="ctn"><span class="dot app"></span> app (profil gcp)</div>
-              <div class="ctn"><span class="dot db"></span> Cloud SQL Auth Proxy</div>
             </div>
           </div>
           <div class="svc run">
@@ -592,7 +590,7 @@
         <div class="managed">
           <div class="infra"><div class="m-t">Cloud Storage</div><div class="m-s">bucket des fichiers + notification de finalisation</div></div>
           <div class="infra"><div class="m-t">Pub/Sub</div><div class="m-s">topic scan-requests + DLQ + souscription push</div></div>
-          <div class="infra"><div class="m-t">Cloud SQL</div><div class="m-s">PostgreSQL (metadonnees, statuts)</div></div>
+          <div class="infra"><div class="m-t">Supabase</div><div class="m-s">PostgreSQL manage, externe (metadonnees, statuts)</div></div>
         </div>
 
       </div>

@@ -1,4 +1,4 @@
-# Profil "gcp" : adapters reels (scanner distant, Pub/Sub, JPA/Cloud SQL, GCS).
+# Profil "gcp" : adapters reels (scanner distant, Pub/Sub, JPA/Supabase Postgres, GCS).
 storage:
   gcs:
     bucket: ${GCS_BUCKET:praxedo-upload-files}
