@@ -1,0 +1,16 @@
+# OS
+.DS_Store
+
+# Dossiers de travail temporaires (non versionnes)
+.superpowers/
+.worktrees/
+claude_chats/
+
+# Dumps de session
+*-this-session-*.txt
+
+# Reglages locaux Claude Code (specifiques a la machine)
+.claude/settings.local.json
+
+# Brouillons ephemeres du companion visuel de brainstorming (serveurs, mockups WIP)
+docs/superpowers/brainstorm/

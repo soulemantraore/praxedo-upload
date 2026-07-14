@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  a { color: #005EA8; text-decoration: none; }
+  a:hover { color: #004B87; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #C7D0DA; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes popIn { from { opacity: 0; transform: translateY(14px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+</style>
+</helmet>
+
+<div style="min-height:100vh; width:100%; font-family:'IBM Plex Sans',system-ui,sans-serif; background:#EEF2F6; color:#16232F;">
+
+  <!-- TOP BAR -->
+  <header style="{{ headerStyle }}">
+    <div style="max-width:1080px; margin:0 auto; padding:0 28px; height:66px; display:flex; align-items:center; justify-content:space-between;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="width:36px; height:36px; border-radius:9px; background:#005EA8; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+        </div>
+        <div style="line-height:1.15;">
+          <div style="font-weight:700; font-size:15.5px; letter-spacing:-.01em; color:{{ logoColor }};">{{ portalName }}</div>
+          <div style="font-size:11.5px; color:{{ headerSub }}; font-weight:500;">Fichiers sécurisés</div>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <button onClick="{{ openUpload }}" style="display:flex; align-items:center; gap:8px; background:#005EA8; color:#fff; border:none; border-radius:9px; padding:10px 18px; font:inherit; font-size:13.5px; font-weight:600; cursor:pointer;" style-hover="background:#004B87">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>Déposer un fichier
+        </button>
+        <div style="display:flex; align-items:center; gap:9px; padding-left:14px; border-left:1px solid {{ headerDivider }};">
+          <div style="width:34px; height:34px; border-radius:50%; background:#005EA8; color:#fff; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">MC</div>
+          <div style="line-height:1.15;">
+            <div style="font-size:13px; font-weight:600; color:{{ logoColor }};">Marie Colin</div>
+            <div style="font-size:11px; color:{{ headerSub }};">Bâtir SA</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONTENT -->
+  <main style="max-width:1080px; margin:0 auto; padding:28px; animation:fadeUp .3s ease both;">
+
+    <!-- METRICS -->
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:16px;">
+      <div style="background:#fff; border:1px solid #E1E7EE; border-radius:12px; padding:18px 20px;">
+        <div style="font-size:12.5px; color:#667586; font-weight:500;">Total fichiers</div>
+        <div style="font-size:30px; font-weight:700; margin-top:6px; letter-spacing:-.02em;">{{ stats.total }}</div>
+      </div>
+      <div style="background:#fff; border:1px solid #E1E7EE; border-radius:12px; padding:18px 20px; position:relative; overflow:hidden;">
+        <div style="position:absolute; left:0; top:0; bottom:0; width:3px; background:#28A15E;"></div>
+        <div style="font-size:12.5px; color:#667586; font-weight:500;">Validés</div>
+        <div style="font-size:30px; font-weight:700; margin-top:6px; color:#1F7A46; letter-spacing:-.02em;">{{ stats.clean }}</div>
+      </div>
+      <div style="background:#fff; border:1px solid #E1E7EE; border-radius:12px; padding:18px 20px; position:relative; overflow:hidden;">
+        <div style="position:absolute; left:0; top:0; bottom:0; width:3px; background:#2C8BD8;"></div>
+        <div style="font-size:12.5px; color:#667586; font-weight:500;">En analyse</div>
+        <div style="font-size:30px; font-weight:700; margin-top:6px; color:#1D6FB0; letter-spacing:-.02em;">{{ stats.scanning }}</div>
+      </div>
+      <div style="background:#fff; border:1px solid #E1E7EE; border-radius:12px; padding:18px 20px; position:relative; overflow:hidden;">
+        <div style="position:absolute; left:0; top:0; bottom:0; width:3px; background:#D14B3E;"></div>
+        <div style="font-size:12.5px; color:#667586; font-weight:500;">Bloqués</div>
+        <div style="font-size:30px; font-weight:700; margin-top:6px; color:#B23B30; letter-spacing:-.02em;">{{ stats.blocked }}</div>
+      </div>
+    </div>
+
+    <!-- FILES TABLE -->
+    <div style="background:#fff; border:1px solid #E1E7EE; border-radius:12px; margin-top:20px; overflow:hidden;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 20px; border-bottom:1px solid #EEF2F6; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:15px; font-weight:600;">Mes fichiers</div>
+          <div style="font-size:12px; color:#8A96A4; margin-top:2px; display:flex; align-items:center; gap:6px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#28A15E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z"/></svg>
+            Seuls les fichiers validés par l'antivirus sont téléchargeables
+          </div>
+        </div>
+        <div style="position:relative; width:280px; max-width:100%;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A96A4" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="position:absolute; left:12px; top:50%; transform:translateY(-50%);"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input value="{{ query }}" onInput="{{ onSearch }}" placeholder="Rechercher un fichier…" style="width:100%; padding:9px 12px 9px 36px; border:1px solid #E1E7EE; border-radius:9px; font:inherit; font-size:13.5px; background:#fff; outline:none;" style-focus="border-color:#005EA8">
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:minmax(0,1fr) 72px 118px 120px 84px; gap:10px; padding:12px 20px; background:#F7F9FB; border-bottom:1px solid #E1E7EE; font-size:11.5px; font-weight:600; color:#8A96A4; text-transform:uppercase; letter-spacing:.04em;">
+        <div>Nom</div><div>Taille</div><div>Ajouté le</div><div>Statut</div><div style="text-align:right;">Action</div>
+      </div>
+
+      <sc-for list="{{ pageRows }}" as="row" hint-placeholder-count="6">
+        <div style="display:grid; grid-template-columns:minmax(0,1fr) 72px 118px 120px 84px; gap:10px; padding:14px 20px; border-bottom:1px solid #F1F4F8; align-items:center;" style-hover="background:#F9FBFC">
+          <div style="display:flex; align-items:center; gap:12px; min-width:0;">
+            <div style="width:34px; height:34px; border-radius:8px; background:{{ row.iconBg }}; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:9.5px; font-weight:700; color:{{ row.iconColor }}; font-family:'IBM Plex Mono',monospace;">{{ row.ext }}</div>
+            <div onClick="{{ row.open }}" style="font-size:13.5px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; min-width:0;" style-hover="color:#005EA8">{{ row.name }}</div>
+          </div>
+          <div style="font-size:12.5px; color:#667586; font-family:'IBM Plex Mono',monospace;">{{ row.sizeLabel }}</div>
+          <div style="font-size:12.5px; color:#667586;">{{ row.dateLabel }}</div>
+          <div>
+            <span style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:11.5px; font-weight:600; background:{{ row.statusBg }}; color:{{ row.statusColor }};">
+              <span style="{{ row.dotStyle }}"></span>{{ row.statusLabel }}
+            </span>
+            <sc-if value="{{ row.isScanning }}" hint-placeholder-val="{{ false }}">
+              <div style="height:4px; background:#E6F0F8; border-radius:3px; margin-top:7px; overflow:hidden;">
+                <div style="height:100%; background:#2C8BD8; border-radius:3px; transition:width .2s; width:{{ row.progress }}%;"></div>
+              </div>
+            </sc-if>
+          </div>
+          <div style="display:flex; justify-content:flex-end; gap:8px;">
+            <sc-if value="{{ row.canDownload }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ row.download }}" style="display:flex; align-items:center; gap:6px; background:#E6F4EC; color:#1F7A46; border:none; border-radius:8px; padding:8px 11px; font:inherit; font-size:12.5px; font-weight:600; cursor:pointer;" style-hover="background:#D3ECDD">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1F7A46" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+              </button>
+            </sc-if>
+            <button onClick="{{ row.open }}" style="background:#fff; color:#4A5A6A; border:1px solid #E1E7EE; border-radius:8px; padding:8px 11px; font:inherit; font-size:12.5px; font-weight:500; cursor:pointer;" style-hover="border-color:#005EA8;color:#005EA8">Voir</button>
+          </div>
+        </div>
+      </sc-for>
+
+      <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:48px; text-align:center; color:#8A96A4; font-size:13.5px;">Aucun fichier ne correspond à votre recherche.</div>
+      </sc-if>
+
+      <!-- PAGINATION -->
+      <sc-if value="{{ showPager }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 20px; border-top:1px solid #EEF2F6;">
+          <div style="font-size:12.5px; color:#8A96A4;">{{ rangeLabel }}</div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <button onClick="{{ goPrev }}" disabled="{{ noPrev }}" style="{{ prevStyle }}">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <span style="font-size:12.5px; font-weight:600; color:#4A5A6A; padding:0 4px;">Page {{ page }} / {{ totalPages }}</span>
+            <button onClick="{{ goNext }}" disabled="{{ noNext }}" style="{{ nextStyle }}">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="text-align:center; font-size:11.5px; color:#9AA6B3; margin-top:22px;">Micro-service de gestion de fichiers sécurisés · analyse antivirus obligatoire avant tout téléchargement</div>
+  </main>
+
+  <!-- ===================== UPLOAD MODAL ===================== -->
+  <sc-if value="{{ uploadOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeUpload }}" style="position:fixed; inset:0; background:rgba(16,35,51,.5); display:flex; align-items:center; justify-content:center; padding:24px; z-index:60; animation:overlayIn .18s ease both;">
+      <div onClick="{{ stop }}" style="width:560px; max-width:100%; background:#fff; border-radius:16px; overflow:hidden; box-shadow:0 24px 70px rgba(0,0,0,.28); animation:popIn .2s ease both;">
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:20px 24px; border-bottom:1px solid #EEF2F6;">
+          <div>
+            <div style="font-size:16px; font-weight:600;">Déposer des fichiers</div>
+            <div style="font-size:12.5px; color:#667586; margin-top:2px;">Un ou plusieurs fichiers · analyse antivirus automatique</div>
+          </div>
+          <button onClick="{{ closeUpload }}" style="width:32px; height:32px; border-radius:8px; border:none; background:#F0F4F8; color:#667586; cursor:pointer; display:flex; align-items:center; justify-content:center;" style-hover="background:#E2E9F0">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+
+        <div style="padding:24px;">
+          <div onDrop="{{ onDrop }}" onDragOver="{{ onDragOver }}" onDragLeave="{{ onDragLeave }}" style="{{ dropStyle }}">
+            <div style="width:60px; height:60px; border-radius:50%; background:#E6F0F8; display:flex; align-items:center; justify-content:center; margin:0 auto 16px;">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#005EA8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M12 3v13"/><path d="m7 8 5-5 5 5"/></svg>
+            </div>
+            <div style="font-size:16px; font-weight:600;">Glissez vos fichiers ici</div>
+            <div style="font-size:13px; color:#667586; margin-top:5px;">ou</div>
+            <button onClick="{{ pick }}" style="margin-top:12px; background:#005EA8; color:#fff; border:none; border-radius:9px; padding:11px 22px; font:inherit; font-size:14px; font-weight:600; cursor:pointer;" style-hover="background:#004B87">Parcourir mes fichiers</button>
+            <input ref="{{ fileInputRef }}" type="file" multiple onChange="{{ onPick }}" style="display:none;">
+            <div style="font-size:12px; color:#8A96A4; margin-top:16px;">Tous formats · jusqu'à 2 Go par fichier · sélection multiple</div>
+          </div>
+
+          <div style="display:flex; gap:10px; margin-top:16px;">
+            <div style="flex:1; background:#F7F9FB; border:1px solid #EEF2F6; border-radius:10px; padding:12px 14px;">
+              <div style="font-size:18px; font-weight:700; color:#005EA8;">1</div>
+              <div style="font-size:11.5px; color:#667586; margin-top:3px; line-height:1.4;">Réception & mise en file</div>
+            </div>
+            <div style="flex:1; background:#F7F9FB; border:1px solid #EEF2F6; border-radius:10px; padding:12px 14px;">
+              <div style="font-size:18px; font-weight:700; color:#005EA8;">2</div>
+              <div style="font-size:11.5px; color:#667586; margin-top:3px; line-height:1.4;">Analyse antivirus</div>
+            </div>
+            <div style="flex:1; background:#F7F9FB; border:1px solid #EEF2F6; border-radius:10px; padding:12px 14px;">
+              <div style="font-size:18px; font-weight:700; color:#005EA8;">3</div>
+              <div style="font-size:11.5px; color:#667586; margin-top:3px; line-height:1.4;">Validé & téléchargeable</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ===================== DETAIL MODAL ===================== -->
+  <sc-if value="{{ sel }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeDetail }}" style="position:fixed; inset:0; background:rgba(16,35,51,.5); display:flex; align-items:flex-start; justify-content:center; padding:32px 24px; z-index:60; overflow-y:auto; animation:overlayIn .18s ease both;">
+      <div onClick="{{ stop }}" style="width:760px; max-width:100%; background:#fff; border-radius:16px; overflow:hidden; box-shadow:0 24px 70px rgba(0,0,0,.28); animation:popIn .2s ease both;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; padding:20px 24px; border-bottom:1px solid #EEF2F6;">
+          <div style="display:flex; align-items:center; gap:14px; min-width:0;">
+            <div style="width:46px; height:46px; border-radius:10px; background:{{ sel.iconBg }}; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:11px; font-weight:700; color:{{ sel.iconColor }}; font-family:'IBM Plex Mono',monospace;">{{ sel.ext }}</div>
+            <div style="min-width:0;">
+              <div style="font-size:17px; font-weight:600; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ sel.name }}</div>
+              <div style="font-size:12.5px; color:#667586; margin-top:2px; font-family:'IBM Plex Mono',monospace;">{{ sel.sizeLabel }} · {{ sel.dateLabel }}</div>
+            </div>
+          </div>
+          <button onClick="{{ closeDetail }}" style="width:32px; height:32px; border-radius:8px; border:none; background:#F0F4F8; color:#667586; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0;" style-hover="background:#E2E9F0">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+
+        <div style="padding:24px; display:grid; grid-template-columns:1.5fr 1fr; gap:16px;">
+          <div style="display:flex; flex-direction:column; gap:16px; min-width:0;">
+            <div style="border:1px solid {{ sel.verdictBorder }}; background:{{ sel.verdictBg }}; border-radius:12px; padding:20px;">
+              <div style="display:flex; align-items:center; gap:14px;">
+                <div style="width:44px; height:44px; border-radius:50%; background:{{ sel.verdictIconBg }}; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                  <div style="{{ sel.spinnerStyle }}"></div>
+                  <span style="{{ sel.verdictGlyphStyle }}">{{ sel.verdictGlyph }}</span>
+                </div>
+                <div>
+                  <div style="font-size:16px; font-weight:700; color:{{ sel.verdictColor }};">{{ sel.verdictTitle }}</div>
+                  <div style="font-size:12.5px; color:{{ sel.verdictColor }}; opacity:.85; margin-top:2px;">{{ sel.verdictText }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="background:#fff; border:1px solid #E1E7EE; border-radius:12px; padding:4px 18px;">
+              <div style="display:flex; justify-content:space-between; padding:11px 0; border-bottom:1px solid #F1F4F8; font-size:13px;"><span style="color:#667586;">Moteur antivirus</span><span style="font-weight:500;">{{ sel.engine }}</span></div>
+              <div style="display:flex; justify-content:space-between; padding:11px 0; border-bottom:1px solid #F1F4F8; font-size:13px;"><span style="color:#667586;">Base de signatures</span><span style="font-weight:500;">{{ sel.sigDb }}</span></div>
+              <div style="display:flex; justify-content:space-between; padding:11px 0; border-bottom:1px solid #F1F4F8; font-size:13px;"><span style="color:#667586;">Durée d'analyse</span><span style="font-weight:500;">{{ sel.durationLabel }}</span></div>
+              <div style="display:flex; justify-content:space-between; padding:11px 0; font-size:13px;"><span style="color:#667586;">Menace détectée</span><span style="font-weight:500; color:{{ sel.threatColor }};">{{ sel.threatLabel }}</span></div>
+            </div>
+
+            <div style="background:#F7F9FB; border:1px solid #EEF2F6; border-radius:12px; padding:14px 16px;">
+              <div style="font-size:11px; color:#667586; margin-bottom:5px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">Empreinte SHA-256</div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; line-height:1.6; color:#16232F; word-break:break-all;">{{ sel.hash }}</div>
+            </div>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:16px;">
+            <div style="background:#fff; border:1px solid #E1E7EE; border-radius:12px; padding:18px;">
+              <div style="font-size:14px; font-weight:600; margin-bottom:4px;">Téléchargement</div>
+              <div style="font-size:12.5px; color:#667586; line-height:1.5; margin-bottom:14px;">{{ sel.dlHint }}</div>
+              <sc-if value="{{ sel.canDownload }}" hint-placeholder-val="{{ false }}">
+                <button onClick="{{ sel.download }}" style="display:flex; align-items:center; justify-content:center; gap:9px; width:100%; background:#1F9254; color:#fff; border:none; border-radius:10px; padding:12px; font:inherit; font-size:14px; font-weight:600; cursor:pointer;" style-hover="background:#1B7E48">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>Télécharger
+                </button>
+              </sc-if>
+              <sc-if value="{{ sel.showBlocked }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex; align-items:center; justify-content:center; gap:9px; width:100%; background:#FBEBE9; color:#B23B30; border-radius:10px; padding:12px; font-size:13px; font-weight:600;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B23B30" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>Bloqué
+                </div>
+              </sc-if>
+              <sc-if value="{{ sel.showPending }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex; align-items:center; justify-content:center; gap:9px; width:100%; background:#F0F4F8; color:#667586; border-radius:10px; padding:12px; font-size:13px; font-weight:600;">Analyse en cours…</div>
+              </sc-if>
+              <sc-if value="{{ sel.showRescan }}" hint-placeholder-val="{{ false }}">
+                <button onClick="{{ sel.rescan }}" style="display:flex; align-items:center; justify-content:center; gap:9px; width:100%; background:#005EA8; color:#fff; border:none; border-radius:10px; padding:12px; font:inherit; font-size:14px; font-weight:600; cursor:pointer;" style-hover="background:#004B87">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>Relancer l'analyse
+                </button>
+              </sc-if>
+            </div>
+
+            <div style="background:#fff; border:1px solid #E1E7EE; border-radius:12px; padding:18px;">
+              <div style="font-size:11px; font-weight:600; color:#8A96A4; text-transform:uppercase; letter-spacing:.04em; margin-bottom:14px;">Cycle de vie</div>
+              <sc-for list="{{ sel.timeline }}" as="step" hint-placeholder-count="4">
+                <div style="display:flex; gap:12px; align-items:flex-start;">
+                  <div style="display:flex; flex-direction:column; align-items:center; align-self:stretch;">
+                    <span style="width:11px; height:11px; border-radius:50%; background:{{ step.color }}; flex-shrink:0; margin-top:2px;"></span>
+                    <span style="{{ step.lineStyle }}"></span>
+                  </div>
+                  <div style="padding-bottom:14px;">
+                    <div style="font-size:13px; font-weight:600;">{{ step.label }}</div>
+                    <div style="font-size:11.5px; color:#8A96A4; margin-top:1px;">{{ step.detail }}</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- TOAST -->
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#16232F; color:#fff; padding:13px 20px; border-radius:10px; font-size:13.5px; font-weight:500; box-shadow:0 8px 30px rgba(0,0,0,.22); display:flex; align-items:center; gap:10px; animation:fadeUp .25s ease both; z-index:70;">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#28A15E" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>{{ toast }}
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<!--
+DESIGN LOGIC REFERENCE (from the .dc.html data-dc-script) - status model, formatting, colors:
+
+Props: variant enum ["Clair & aéré","Rail sombre"] default "Clair & aéré"; portalName text default "Praxedo"; scanSpeed enum.
+
+Statuses (mockup -> our FileStatus): queued->PENDING, scanning->SCANNING, clean->CLEAN, infected->INFECTED, error->SCAN_FAILED, (EXPIRED not in mockup).
+
+meta(status): label / color(text) / bg / dot / pulse:
+  queued    : 'En attente'   #8A6D1F / #FBF3DE / dot #C99A2E / pulse false
+  scanning  : 'Scan en cours'#1D6FB0 / #E6F0F8 / dot #2C8BD8 / pulse true
+  clean     : 'Validé'       #1F7A46 / #E6F4EC / dot #28A15E / pulse false
+  infected  : 'Bloqué'       #B23B30 / #FBEBE9 / dot #D14B3E / pulse false
+  error     : 'Erreur'       #5A6674 / #EEF1F4 / dot #7A8794 / pulse false
+
+extColors(ext) -> [bg, color]:
+  PDF:[#FBEBE9,#C0392B] XLSX:[#E6F4EC,#1F7A46] CSV:[#E6F4EC,#1F7A46] ZIP:[#F3EDF9,#7A4FB5]
+  DOCX:[#E6F0F8,#1D6FB0] SQL:[#EEF1F4,#5A6674] EXE:[#FBEBE9,#B23B30] default:[#EEF2F6,#667586]
+
+fmtSize(b): b>=1e9 -> (b/1e9).toFixed(1)+' Go'; b>=1e6 -> (b/1e6).toFixed(1)+' Mo'; b>=1e3 -> (b/1e3).toFixed(0)+' Ko'; else b+' o'.  (Use French comma decimal.)
+fmtDateShort(ts): DD/MM/YY HH:MM (padded).  fmtDate(ts): 'D MMM YYYY, HH:MM' with months ['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'].
+
+Verdict card by status:
+  clean   : border #BFE3CC bg #EEF8F1 iconBg #28A15E color #1F7A46 title 'Fichier validé'  text 'Aucune menace détectée - téléchargement sécurisé.' glyph '✓'
+  infected: border #F1C7C1 bg #FCEEEC iconBg #D14B3E color #B23B30 title 'Menace détectée'  text 'Fichier mis en quarantaine, téléchargement interdit.' glyph '✕'
+  error   : border #DEE3E9 bg #F5F7F9 iconBg #7A8794 color #5A6674 title 'Analyse échouée'  text "L'analyse n'a pas abouti. Relancez le scan." glyph '!'
+  scanning/queued (default): border #CFE0EE bg #EFF5FA iconBg #2C8BD8 color #1D6FB0 title 'Analyse en cours'/'En file d'attente' text 'Analyse antivirus du contenu en cours…' glyph '' (show spinner)
+
+Download card state: clean -> green 'Télécharger' (#1F9254 hover #1B7E48); infected -> red 'Bloqué' chip; scanning/queued -> grey 'Analyse en cours…' chip; error -> blue 'Relancer l'analyse' (#005EA8).
+dlHint: clean "Le fichier a été validé par l'antivirus." infected "Téléchargement interdit : une menace a été détectée." error "Relancez l'analyse pour rendre le fichier téléchargeable." else "Disponible une fois l'analyse terminée."
+
+Timeline (4 steps): 'Fichier reçu' (date) ; 'Mis en file d'attente' ; 'Analyse antivirus' (En cours…/Terminée) ; final = clean:'Validé - téléchargeable'/infected:'Bloqué - quarantaine'/error:'Erreur'/else 'Décision'. Dot colors green #28A15E when done, amber #C99A2E / blue #2C8BD8 in-progress, grey #D0D7DE pending, red #D14B3E blocked.
+
+engine 'Praxedo Secure Scan (ClamAV 1.3)'; sigDb 'MàJ 09 juil. 2026'; durationLabel scanMs/1000 + ' s'.
+Header: right block is the connected client (avatar initials + name + org). Left is brand (portalName + 'Fichiers sécurisés').
+variant 'Rail sombre' => dark header (#0C2233). Default 'Clair & aéré' => white header.
+-->
+</body>
+</html>
