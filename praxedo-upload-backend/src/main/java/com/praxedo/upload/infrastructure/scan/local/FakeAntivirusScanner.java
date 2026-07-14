@@ -1,4 +1,4 @@
-package com.praxedo.upload.infrastructure.scan;
+package com.praxedo.upload.infrastructure.scan.local;
 
 import com.praxedo.upload.domain.file.ScanVerdict;
 import com.praxedo.upload.domain.port.AntivirusScanner;
@@ -15,7 +15,8 @@ import java.time.Instant;
 /**
  * Doublure locale du port AntivirusScanner (profils local/test) :
  * lit les octets via {@link FileStorage} et marque INFECTED tout contenu portant
- * la signature de test EICAR, sinon CLEAN. (En gcp c'est {@link RemoteScannerClient}.)
+ * la signature de test EICAR, sinon CLEAN.
+ * (En gcp c'est {@link com.praxedo.upload.infrastructure.scan.gcp.RemoteScannerClient}.)
  */
 @Component
 @Profile({"local", "test"})

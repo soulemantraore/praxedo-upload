@@ -1,4 +1,4 @@
-package com.praxedo.upload.infrastructure.scan;
+package com.praxedo.upload.infrastructure.scan.gcp;
 
 import com.praxedo.upload.domain.file.ScanVerdict;
 import com.praxedo.upload.domain.port.AntivirusScanner;

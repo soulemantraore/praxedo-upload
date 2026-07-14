@@ -1,4 +1,4 @@
-package com.praxedo.upload.infrastructure.scan;
+package com.praxedo.upload.infrastructure.scan.gcp;
 
 import com.google.api.core.ApiFuture;
 import com.google.cloud.pubsub.v1.Publisher;

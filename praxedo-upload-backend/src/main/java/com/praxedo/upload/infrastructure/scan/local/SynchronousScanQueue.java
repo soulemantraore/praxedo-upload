@@ -1,4 +1,4 @@
-package com.praxedo.upload.infrastructure.scan;
+package com.praxedo.upload.infrastructure.scan.local;
 
 import com.praxedo.upload.application.FileScanService;
 import com.praxedo.upload.domain.port.ScanQueue;
