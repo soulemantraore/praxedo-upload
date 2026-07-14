@@ -1,8 +1,8 @@
 package com.praxedo.upload.infrastructure.web.helpers;
 
-import com.praxedo.upload.domain.file.exceptions.DownloadNotAllowedException;
-import com.praxedo.upload.domain.file.exceptions.FileNotFoundException;
-import com.praxedo.upload.domain.file.exceptions.IllegalFileTransitionException;
+import com.praxedo.upload.domain.exceptions.DownloadNotAllowedException;
+import com.praxedo.upload.domain.exceptions.FileNotFoundException;
+import com.praxedo.upload.domain.exceptions.IllegalFileTransitionException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;

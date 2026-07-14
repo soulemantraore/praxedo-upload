@@ -1,6 +1,6 @@
-package com.praxedo.upload.domain.file;
+package com.praxedo.upload.domain.models;
 
-import com.praxedo.upload.domain.client.ApiClient;
+import com.praxedo.upload.domain.models.ApiClient;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

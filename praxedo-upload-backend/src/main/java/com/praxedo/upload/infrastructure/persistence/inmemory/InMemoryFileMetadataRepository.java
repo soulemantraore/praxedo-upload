@@ -1,6 +1,6 @@
 package com.praxedo.upload.infrastructure.persistence.inmemory;
 
-import com.praxedo.upload.domain.file.*;
+import com.praxedo.upload.domain.models.*;
 import com.praxedo.upload.domain.port.FileMetadataRepository;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Repository;

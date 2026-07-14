@@ -1,7 +1,7 @@
 package com.praxedo.upload.application;
 
-import com.praxedo.upload.domain.file.FileRecord;
-import com.praxedo.upload.domain.file.ScanVerdict;
+import com.praxedo.upload.domain.models.FileRecord;
+import com.praxedo.upload.domain.models.ScanVerdict;
 import com.praxedo.upload.domain.port.AntivirusScanner;
 import com.praxedo.upload.domain.port.FileMetadataRepository;
 import com.praxedo.upload.domain.port.FileStorage;

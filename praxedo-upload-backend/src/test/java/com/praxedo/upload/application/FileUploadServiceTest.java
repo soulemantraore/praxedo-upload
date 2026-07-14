@@ -1,7 +1,7 @@
 package com.praxedo.upload.application;
 
 import com.praxedo.upload.application.dto.UploadCommands.*;
-import com.praxedo.upload.domain.file.FileStatus;
+import com.praxedo.upload.domain.models.FileStatus;
 import com.praxedo.upload.domain.port.IdGenerator;
 import com.praxedo.upload.infrastructure.persistence.inmemory.InMemoryFileMetadataRepository;
 import com.praxedo.upload.infrastructure.storage.local.LocalFileStorage;

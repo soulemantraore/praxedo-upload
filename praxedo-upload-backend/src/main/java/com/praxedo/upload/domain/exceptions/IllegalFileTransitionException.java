@@ -1,6 +1,6 @@
-package com.praxedo.upload.domain.file.exceptions;
+package com.praxedo.upload.domain.exceptions;
 
-import com.praxedo.upload.domain.file.FileStatus;
+import com.praxedo.upload.domain.models.FileStatus;
 
 /** Levee lorsqu'une transition de statut non autorisee est tentee sur un FileRecord. */
 public class IllegalFileTransitionException extends RuntimeException {

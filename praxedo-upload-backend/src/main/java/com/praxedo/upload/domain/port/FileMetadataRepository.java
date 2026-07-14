@@ -1,10 +1,10 @@
 package com.praxedo.upload.domain.port;
 
-import com.praxedo.upload.domain.file.FileQuery;
-import com.praxedo.upload.domain.file.FileRecord;
-import com.praxedo.upload.domain.file.FileStatus;
-import com.praxedo.upload.domain.file.PageResult;
-import com.praxedo.upload.domain.file.StatusCounts;
+import com.praxedo.upload.domain.models.FileQuery;
+import com.praxedo.upload.domain.models.FileRecord;
+import com.praxedo.upload.domain.models.FileStatus;
+import com.praxedo.upload.domain.models.PageResult;
+import com.praxedo.upload.domain.models.StatusCounts;
 
 import java.time.Instant;
 import java.util.List;

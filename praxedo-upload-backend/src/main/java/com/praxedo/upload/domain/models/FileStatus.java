@@ -1,4 +1,4 @@
-package com.praxedo.upload.domain.file;
+package com.praxedo.upload.domain.models;
 
 import java.util.Map;
 import java.util.Set;

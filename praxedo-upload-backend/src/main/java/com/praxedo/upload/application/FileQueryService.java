@@ -2,12 +2,12 @@ package com.praxedo.upload.application;
 
 import com.praxedo.upload.application.dto.FileViews.BatchView;
 import com.praxedo.upload.application.dto.FileViews.FileView;
-import com.praxedo.upload.domain.file.FileQuery;
-import com.praxedo.upload.domain.file.FileRecord;
-import com.praxedo.upload.domain.file.FileStatus;
-import com.praxedo.upload.domain.file.PageResult;
-import com.praxedo.upload.domain.file.StatusCounts;
-import com.praxedo.upload.domain.file.exceptions.FileNotFoundException;
+import com.praxedo.upload.domain.models.FileQuery;
+import com.praxedo.upload.domain.models.FileRecord;
+import com.praxedo.upload.domain.models.FileStatus;
+import com.praxedo.upload.domain.models.PageResult;
+import com.praxedo.upload.domain.models.StatusCounts;
+import com.praxedo.upload.domain.exceptions.FileNotFoundException;
 import com.praxedo.upload.domain.port.FileMetadataRepository;
 import org.springframework.stereotype.Service;
 

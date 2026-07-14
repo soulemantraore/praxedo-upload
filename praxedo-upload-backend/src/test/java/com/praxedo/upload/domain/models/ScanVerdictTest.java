@@ -1,4 +1,4 @@
-package com.praxedo.upload.domain.file;
+package com.praxedo.upload.domain.models;
 
 import org.junit.jupiter.api.Test;
 

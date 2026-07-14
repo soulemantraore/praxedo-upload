@@ -1,4 +1,4 @@
-package com.praxedo.upload.domain.file.exceptions;
+package com.praxedo.upload.domain.exceptions;
 
 import java.util.UUID;
 

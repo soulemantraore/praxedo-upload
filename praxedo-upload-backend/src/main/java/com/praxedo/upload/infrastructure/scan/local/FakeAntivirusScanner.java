@@ -1,6 +1,6 @@
 package com.praxedo.upload.infrastructure.scan.local;
 
-import com.praxedo.upload.domain.file.ScanVerdict;
+import com.praxedo.upload.domain.models.ScanVerdict;
 import com.praxedo.upload.domain.port.AntivirusScanner;
 import com.praxedo.upload.domain.port.FileStorage;
 import org.springframework.context.annotation.Profile;

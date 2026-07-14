@@ -1,7 +1,7 @@
 package com.praxedo.upload.infrastructure.web.helpers;
 
 import com.praxedo.upload.application.ApiKeyService;
-import com.praxedo.upload.domain.client.ApiClient;
+import com.praxedo.upload.domain.models.ApiClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;

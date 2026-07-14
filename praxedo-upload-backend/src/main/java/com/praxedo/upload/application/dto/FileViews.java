@@ -1,9 +1,9 @@
 package com.praxedo.upload.application.dto;
 
-import com.praxedo.upload.domain.file.FileRecord;
-import com.praxedo.upload.domain.file.FileStatus;
-import com.praxedo.upload.domain.file.ScanVerdict;
-import com.praxedo.upload.domain.file.StatusCounts;
+import com.praxedo.upload.domain.models.FileRecord;
+import com.praxedo.upload.domain.models.FileStatus;
+import com.praxedo.upload.domain.models.ScanVerdict;
+import com.praxedo.upload.domain.models.StatusCounts;
 
 import java.time.Instant;
 import java.util.List;

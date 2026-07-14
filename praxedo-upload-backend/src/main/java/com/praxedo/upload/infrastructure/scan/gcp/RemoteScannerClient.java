@@ -3,7 +3,7 @@ package com.praxedo.upload.infrastructure.scan.gcp;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.auth.oauth2.IdTokenCredentials;
 import com.google.auth.oauth2.IdTokenProvider;
-import com.praxedo.upload.domain.file.ScanVerdict;
+import com.praxedo.upload.domain.models.ScanVerdict;
 import com.praxedo.upload.domain.port.AntivirusScanner;
 import com.praxedo.upload.infrastructure.config.ScannerProperties;
 import org.springframework.beans.factory.annotation.Value;

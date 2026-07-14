@@ -1,6 +1,6 @@
 package com.praxedo.upload.domain.port;
 
-import com.praxedo.upload.domain.client.ApiClient;
+import com.praxedo.upload.domain.models.ApiClient;
 
 import java.util.Optional;
 
