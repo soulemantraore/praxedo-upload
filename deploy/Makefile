@@ -58,6 +58,20 @@ PUSH_SA          := $(PUSH_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
 CLAMAV_IMAGE     ?= clamav/clamav-debian:latest
 PROXY_IMAGE      ?= gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
 
+# ---- CI/CD : Workload Identity Federation + deploy service account ----
+# Shared by BOTH repos (backend + frontend) : one WIF provider, one deploy SA.
+WIF_POOL         ?= github-pool
+WIF_PROVIDER     ?= github-provider
+DEPLOY_SA_NAME   ?= praxedo-deployer
+DEPLOY_SA        := $(DEPLOY_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
+# GitHub org/user allowed to authenticate, and the repos bound to the deploy SA.
+GITHUB_OWNER     ?= soulemantraore
+GITHUB_REPOS     ?= soulemantraore/praxedo-upload-backend,soulemantraore/praxedo-upload-ui
+# Helpers to iterate over the comma-separated repo list inside recipes.
+comma            := ,
+empty            :=
+space            := $(empty) $(empty)
+
 # ---- Derived (deterministic; no gcloud call needed) ----
 IMAGE_URI            := $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO)/$(IMAGE):$(IMAGE_TAG)
 SQL_CONNECTION_NAME  := $(PROJECT_ID):$(REGION):$(DB_INSTANCE)
@@ -76,7 +90,7 @@ REPO_ROOT  := $(abspath $(DEPLOY_DIR)/..)
 
 .PHONY: help enable-apis bootstrap service-accounts secrets sql bucket pubsub iam \
         infra build-push render-api render-worker deploy-api deploy-worker \
-        pubsub-push deploy config
+        pubsub-push deploy config cicd-setup cicd-values cicd-github
 
 # ---------------------------------------------------------------------
 help: ## Show this help.
@@ -91,6 +105,11 @@ help: ## Show this help.
 	@echo "  pubsub-push      Create the authenticated push subscription to the worker"
 	@echo "  deploy           build-push + deploy-api + deploy-worker + pubsub-push"
 	@echo "  config           Print the resolved configuration"
+	@echo ""
+	@echo "CI/CD (GitHub Actions -> Cloud Run), run once:"
+	@echo "  cicd-setup       Create the deploy SA + WIF provider, bind the GitHub repos"
+	@echo "  cicd-values      Print GCP_WIF_PROVIDER and GCP_DEPLOY_SA (to paste in GitHub)"
+	@echo "  cicd-github      Push those two secrets to both repos via the gh CLI"
 	@echo ""
 	@echo "Override variables, e.g.: make deploy PROJECT_ID=my-proj REGION=europe-west1"
 
@@ -295,3 +314,50 @@ deploy: ## Build + push + deploy both services + wire the push subscription.
 	$(MAKE) deploy-api
 	$(MAKE) deploy-worker
 	$(MAKE) pubsub-push
+
+# ---------------------------------------------------------------------
+# CI/CD : Workload Identity Federation for GitHub Actions.
+# Run `cicd-setup` ONCE, then `cicd-values` (or `cicd-github`) to fill the two
+# secrets (GCP_WIF_PROVIDER, GCP_DEPLOY_SA) in BOTH GitHub repos.
+cicd-setup: ## Create the deploy SA + WIF provider and authorize the GitHub repos.
+	# 1) Deploy service account, impersonated by GitHub Actions via WIF.
+	gcloud iam service-accounts create $(DEPLOY_SA_NAME) \
+	  --display-name="praxedo GitHub Actions deployer" --project=$(PROJECT_ID) || true
+	# 2) Deployment roles (union of what `make deploy` needs, backend + frontend).
+	for role in roles/run.admin roles/artifactregistry.writer roles/cloudbuild.builds.editor \
+	            roles/iam.serviceAccountUser roles/pubsub.admin roles/storage.admin; do \
+	  gcloud projects add-iam-policy-binding $(PROJECT_ID) \
+	    --member="serviceAccount:$(DEPLOY_SA)" --role=$$role --condition=None >/dev/null; \
+	done
+	# 3) Workload Identity pool + GitHub OIDC provider (restricted to the owner).
+	gcloud iam workload-identity-pools create $(WIF_POOL) \
+	  --location=global --display-name="GitHub Actions" --project=$(PROJECT_ID) || true
+	gcloud iam workload-identity-pools providers create-oidc $(WIF_PROVIDER) \
+	  --location=global --workload-identity-pool=$(WIF_POOL) --display-name="GitHub OIDC" \
+	  --issuer-uri="https://token.actions.githubusercontent.com" \
+	  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
+	  --attribute-condition="assertion.repository_owner=='$(GITHUB_OWNER)'" \
+	  --project=$(PROJECT_ID) || true
+	# 4) Let each GitHub repo impersonate the deploy SA.
+	@for repo in $(subst $(comma),$(space),$(GITHUB_REPOS)); do \
+	  echo "  authorizing $$repo"; \
+	  gcloud iam service-accounts add-iam-policy-binding $(DEPLOY_SA) \
+	    --role=roles/iam.workloadIdentityUser \
+	    --member="principalSet://iam.googleapis.com/projects/$(PROJECT_NUMBER)/locations/global/workloadIdentityPools/$(WIF_POOL)/attribute.repository/$$repo" \
+	    --project=$(PROJECT_ID) >/dev/null; \
+	done
+	@echo ""
+	@$(MAKE) cicd-values
+
+cicd-values: ## Print GCP_WIF_PROVIDER and GCP_DEPLOY_SA (to paste in GitHub secrets).
+	@echo "Paste in GitHub > Settings > Secrets and variables > Actions (both repos):"
+	@echo "  GCP_WIF_PROVIDER = projects/$(PROJECT_NUMBER)/locations/global/workloadIdentityPools/$(WIF_POOL)/providers/$(WIF_PROVIDER)"
+	@echo "  GCP_DEPLOY_SA    = $(DEPLOY_SA)"
+
+cicd-github: ## Push the two secrets to both repos via the gh CLI (needs `gh auth login`).
+	@for repo in $(subst $(comma),$(space),$(GITHUB_REPOS)); do \
+	  echo "  setting secrets on $$repo"; \
+	  gh secret set GCP_WIF_PROVIDER --repo $$repo \
+	    --body "projects/$(PROJECT_NUMBER)/locations/global/workloadIdentityPools/$(WIF_POOL)/providers/$(WIF_PROVIDER)"; \
+	  gh secret set GCP_DEPLOY_SA --repo $$repo --body "$(DEPLOY_SA)"; \
+	done

@@ -106,6 +106,34 @@ La souscription push est créée **après** le worker car son `push-endpoint` es
 
 Vérifier la configuration résolue à tout moment : `make config PROJECT_ID=$PROJECT_ID`.
 
+## CI/CD — Workload Identity Federation (GitHub Actions)
+
+Les workflows des **deux** dépôts (backend + frontend) se déploient sur Cloud Run via
+**Workload Identity Federation** — aucune clé de compte de service n'est stockée dans GitHub.
+Trois cibles automatisent la mise en place, à lancer **une seule fois** (elles couvrent les deux
+dépôts car ils partagent le même provider et le même compte de déploiement) :
+
+```bash
+# 1) Créer le compte de déploiement + le provider WIF et autoriser les dépôts GitHub
+make cicd-setup PROJECT_ID=$PROJECT_ID \
+  GITHUB_OWNER=mon-org \
+  GITHUB_REPOS=mon-org/praxedo-upload-backend,mon-org/praxedo-upload-ui
+
+# 2a) Afficher les deux valeurs à coller dans GitHub (secrets des deux dépôts)
+make cicd-values PROJECT_ID=$PROJECT_ID
+
+# 2b) …ou les pousser directement via le CLI gh (nécessite `gh auth login`)
+make cicd-github PROJECT_ID=$PROJECT_ID
+```
+
+`cicd-setup` crée le compte `praxedo-deployer`, lui accorde les rôles de déploiement
+(`run.admin`, `artifactregistry.writer`, `cloudbuild.builds.editor`, `iam.serviceAccountUser`,
+`pubsub.admin`, `storage.admin`), crée le pool + provider OIDC GitHub (restreint à `GITHUB_OWNER`),
+et autorise chaque dépôt à usurper le compte. `cicd-values`/`cicd-github` renseignent les deux
+**secrets** `GCP_WIF_PROVIDER` et `GCP_DEPLOY_SA` ; les **variables** restantes (`GCP_PROJECT_ID`,
+`GCP_REGION`, `GCS_BUCKET`, `UI_ORIGIN` côté backend ; `VITE_API_BASE_URL`, `ARTIFACT_REPO`,
+`VITE_API_KEY`… côté frontend) se renseignent dans chaque dépôt — voir l'en-tête des workflows.
+
 ## Sécurité de l'endpoint push (production)
 
 `/internal/scan-events` n'est **pas** authentifié dans l'application. En production, il est protégé par le
