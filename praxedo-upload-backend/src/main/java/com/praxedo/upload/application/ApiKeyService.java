@@ -1,6 +1,6 @@
 package com.praxedo.upload.application;
 
-import com.praxedo.upload.domain.client.ApiClient;
+import com.praxedo.upload.domain.models.ApiClient;
 import com.praxedo.upload.domain.port.ApiClientRepository;
 import com.praxedo.upload.domain.port.IdGenerator;
 import org.springframework.stereotype.Service;

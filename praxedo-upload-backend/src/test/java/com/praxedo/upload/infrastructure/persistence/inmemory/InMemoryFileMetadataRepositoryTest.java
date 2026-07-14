@@ -1,6 +1,6 @@
 package com.praxedo.upload.infrastructure.persistence.inmemory;
 
-import com.praxedo.upload.domain.file.*;
+import com.praxedo.upload.domain.models.*;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

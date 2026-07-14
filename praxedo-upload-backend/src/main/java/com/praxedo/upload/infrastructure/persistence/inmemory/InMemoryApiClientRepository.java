@@ -1,6 +1,6 @@
 package com.praxedo.upload.infrastructure.persistence.inmemory;
 
-import com.praxedo.upload.domain.client.ApiClient;
+import com.praxedo.upload.domain.models.ApiClient;
 import com.praxedo.upload.domain.port.ApiClientRepository;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Repository;

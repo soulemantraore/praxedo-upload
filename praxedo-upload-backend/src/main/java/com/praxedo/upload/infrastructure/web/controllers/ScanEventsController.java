@@ -1,7 +1,7 @@
 package com.praxedo.upload.infrastructure.web.controllers;
 
 import com.praxedo.upload.application.FileScanService;
-import com.praxedo.upload.domain.file.FileRecord;
+import com.praxedo.upload.domain.models.FileRecord;
 import com.praxedo.upload.domain.port.FileMetadataRepository;
 import com.praxedo.upload.infrastructure.web.dto.PubSubPushMessage;
 import org.slf4j.Logger;

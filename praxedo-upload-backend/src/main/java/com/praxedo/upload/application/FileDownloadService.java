@@ -1,8 +1,8 @@
 package com.praxedo.upload.application;
 
-import com.praxedo.upload.domain.file.FileRecord;
-import com.praxedo.upload.domain.file.exceptions.DownloadNotAllowedException;
-import com.praxedo.upload.domain.file.exceptions.FileNotFoundException;
+import com.praxedo.upload.domain.models.FileRecord;
+import com.praxedo.upload.domain.exceptions.DownloadNotAllowedException;
+import com.praxedo.upload.domain.exceptions.FileNotFoundException;
 import com.praxedo.upload.domain.port.FileMetadataRepository;
 import com.praxedo.upload.domain.port.FileStorage;
 import com.praxedo.upload.infrastructure.config.StorageProperties;

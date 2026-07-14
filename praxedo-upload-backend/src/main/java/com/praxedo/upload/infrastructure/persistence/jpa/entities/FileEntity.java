@@ -1,8 +1,8 @@
 package com.praxedo.upload.infrastructure.persistence.jpa.entities;
 
-import com.praxedo.upload.domain.file.FileRecord;
-import com.praxedo.upload.domain.file.FileStatus;
-import com.praxedo.upload.domain.file.ScanVerdict;
+import com.praxedo.upload.domain.models.FileRecord;
+import com.praxedo.upload.domain.models.FileStatus;
+import com.praxedo.upload.domain.models.ScanVerdict;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

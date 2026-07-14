@@ -1,6 +1,6 @@
 package com.praxedo.upload.infrastructure.scan.local;
 
-import com.praxedo.upload.domain.file.ScanVerdict;
+import com.praxedo.upload.domain.models.ScanVerdict;
 import com.praxedo.upload.infrastructure.storage.local.LocalFileStorage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

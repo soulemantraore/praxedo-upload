@@ -1,7 +1,7 @@
 package com.praxedo.upload.application;
 
-import com.praxedo.upload.domain.file.FileRecord;
-import com.praxedo.upload.domain.file.FileStatus;
+import com.praxedo.upload.domain.models.FileRecord;
+import com.praxedo.upload.domain.models.FileStatus;
 import com.praxedo.upload.infrastructure.persistence.inmemory.InMemoryFileMetadataRepository;
 import org.junit.jupiter.api.Test;
 

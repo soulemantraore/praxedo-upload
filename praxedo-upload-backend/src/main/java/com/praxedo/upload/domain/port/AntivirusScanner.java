@@ -1,6 +1,6 @@
 package com.praxedo.upload.domain.port;
 
-import com.praxedo.upload.domain.file.ScanVerdict;
+import com.praxedo.upload.domain.models.ScanVerdict;
 
 import java.time.Instant;
 

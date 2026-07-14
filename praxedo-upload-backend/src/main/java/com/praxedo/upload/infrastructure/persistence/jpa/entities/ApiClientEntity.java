@@ -1,6 +1,6 @@
 package com.praxedo.upload.infrastructure.persistence.jpa.entities;
 
-import com.praxedo.upload.domain.client.ApiClient;
+import com.praxedo.upload.domain.models.ApiClient;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;

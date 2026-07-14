@@ -1,6 +1,6 @@
 package com.praxedo.upload.application.dto;
 
-import com.praxedo.upload.domain.file.FileStatus;
+import com.praxedo.upload.domain.models.FileStatus;
 
 import java.net.URI;
 import java.time.Instant;

@@ -1,6 +1,6 @@
-package com.praxedo.upload.domain.file;
+package com.praxedo.upload.domain.models;
 
-import com.praxedo.upload.domain.file.exceptions.IllegalFileTransitionException;
+import com.praxedo.upload.domain.exceptions.IllegalFileTransitionException;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.experimental.Accessors;

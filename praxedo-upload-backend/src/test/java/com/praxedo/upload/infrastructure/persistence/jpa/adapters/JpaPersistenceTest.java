@@ -1,12 +1,12 @@
 package com.praxedo.upload.infrastructure.persistence.jpa.adapters;
 
-import com.praxedo.upload.domain.client.ApiClient;
-import com.praxedo.upload.domain.file.FileQuery;
-import com.praxedo.upload.domain.file.FileRecord;
-import com.praxedo.upload.domain.file.FileStatus;
-import com.praxedo.upload.domain.file.PageResult;
-import com.praxedo.upload.domain.file.ScanVerdict;
-import com.praxedo.upload.domain.file.StatusCounts;
+import com.praxedo.upload.domain.models.ApiClient;
+import com.praxedo.upload.domain.models.FileQuery;
+import com.praxedo.upload.domain.models.FileRecord;
+import com.praxedo.upload.domain.models.FileStatus;
+import com.praxedo.upload.domain.models.PageResult;
+import com.praxedo.upload.domain.models.ScanVerdict;
+import com.praxedo.upload.domain.models.StatusCounts;
 import com.praxedo.upload.infrastructure.persistence.jpa.repositories.ApiClientJpaRepository;
 import com.praxedo.upload.infrastructure.persistence.jpa.repositories.FileJpaRepository;
 import org.junit.jupiter.api.BeforeEach;
