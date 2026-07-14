@@ -1,4 +1,4 @@
-# Profil "gcp" : adapters reels (ClamAV, Pub/Sub, JPA/Cloud SQL, GCS).
+# Profil "gcp" : adapters reels (scanner distant, Pub/Sub, JPA/Cloud SQL, GCS).
 storage:
   gcs:
     bucket: ${GCS_BUCKET:praxedo-upload-files}
@@ -18,9 +18,12 @@ spring:
   flyway:
     enabled: true
 
-clamav:
-  host: ${CLAMAV_HOST:localhost}
-  port: ${CLAMAV_PORT:3310}
+scanner:
+  base-url: ${SCANNER_URL}
+  audience: ${SCANNER_AUDIENCE:${SCANNER_URL}}
+  oidc-enabled: ${SCANNER_OIDC_ENABLED:true}
+  connect-timeout: PT5S
+  read-timeout: PT550S
 
 pubsub:
   project-id: ${GCP_PROJECT_ID:praxedo-upload}

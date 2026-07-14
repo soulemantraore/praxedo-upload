@@ -42,7 +42,7 @@ class FileScanServiceTest {
     void clean_file_becomes_clean(@TempDir Path dir) {
         LocalFileStorage storage = new LocalFileStorage(dir.toString(), "http://localhost:8080");
         FileRecord f = persistPending(storage, "ok.txt", "contenu sain");
-        service(storage, new FakeAntivirusScanner()).scan(f.id());
+        service(storage, new FakeAntivirusScanner(storage)).scan(f.id());
         assertThat(repo.findById(f.id()).orElseThrow().status()).isEqualTo(FileStatus.CLEAN);
     }
 
@@ -50,7 +50,7 @@ class FileScanServiceTest {
     void infected_file_becomes_infected_and_bytes_deleted(@TempDir Path dir) {
         LocalFileStorage storage = new LocalFileStorage(dir.toString(), "http://localhost:8080");
         FileRecord f = persistPending(storage, "virus.txt", EICAR);
-        service(storage, new FakeAntivirusScanner()).scan(f.id());
+        service(storage, new FakeAntivirusScanner(storage)).scan(f.id());
         FileRecord after = repo.findById(f.id()).orElseThrow();
         assertThat(after.status()).isEqualTo(FileStatus.INFECTED);
         assertThat(storage.exists(f.storageKey())).isFalse();
@@ -60,7 +60,7 @@ class FileScanServiceTest {
     void technical_failure_marks_scan_failed(@TempDir Path dir) {
         LocalFileStorage storage = new LocalFileStorage(dir.toString(), "http://localhost:8080");
         FileRecord f = persistPending(storage, "x.txt", "data");
-        AntivirusScanner failing = (in, at) -> { throw new AntivirusScanner.ScanException("moteur KO"); };
+        AntivirusScanner failing = (key, at) -> { throw new AntivirusScanner.ScanException("moteur KO"); };
         service(storage, failing).scan(f.id());
         assertThat(repo.findById(f.id()).orElseThrow().status()).isEqualTo(FileStatus.SCAN_FAILED);
     }

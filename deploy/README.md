@@ -2,44 +2,52 @@
 
 Outillage de déploiement du micro-service sur **Google Cloud Run** (gcloud + Makefile, sans Terraform).
 
-Une seule image Docker est construite et déployée en **deux services Cloud Run** ; le comportement
-(api vs worker) est choisi au runtime par le profil Spring `gcp`.
+Une seule image Docker (backend) est construite et déployée en **deux services Cloud Run** (api vs
+worker, choisis au runtime par le profil Spring `gcp`). Le **scan** vit dans un **troisième service**,
+`praxedo-scanner`, construit depuis le dépôt séparé `praxedo-upload-scanner` (Python + ClamAV).
 
-## Topologie
+## Topologie (3 services)
 
 ```
-                       ┌───────────────────────────────────────────────┐
-   Client / UI ──PUT──▶│  GCS bucket (fichiers)                         │
-       │  (URL signée) │  - CORS: PUT/GET depuis l'origine de l'UI      │
-       │               │  - notification OBJECT_FINALIZE ──┐            │
-       │               └───────────────────────────────────┼───────────┘
-       │                                                    ▼
-       │  X-API-Key                                 Pub/Sub topic (scan-requests)
-       ▼  /api/**                                          │  push (OIDC)
-┌──────────────────┐   publish (rescan)                    ▼
-│  Cloud Run: api  │──────────────────────────▶  ┌────────────────────────────────┐
-│  - app           │                              │  Cloud Run: worker             │
-│  - cloud-sql-    │                              │  - app  /internal/scan-events  │
-│    proxy sidecar │                              │  - clamav sidecar (clamd:3310) │
-└────────┬─────────┘                              │  - cloud-sql-proxy sidecar     │
-         │                                        └──────────┬─────────────────────┘
-         │ localhost:5432                                    │ localhost:5432
-         ▼                                                   ▼
+   Client / UI ──PUT (URL signée)──▶  GCS bucket (fichiers)
+       │                              - CORS PUT/GET (origine UI)
+       │  X-API-Key /api/**           - notification OBJECT_FINALIZE ──┐
+       ▼                                                               ▼
+┌──────────────────┐   publish (rescan)                    Pub/Sub topic (scan-requests)
+│  Cloud Run: api  │────────────────────────┐                         │ push (OIDC)
+│  (public)        │                        ▼                         ▼
+│  - app           │              ┌─────────────────────────────────────────────┐
+│  - cloud-sql-    │              │  Cloud Run: worker (privé, scale-to-zero)    │
+│    proxy sidecar │              │  - app  POST /internal/scan-events           │
+└────────┬─────────┘              │  - cloud-sql-proxy sidecar                   │
+         │                        └──────┬────────────────────────────┬─────────┘
+         │ 127.0.0.1:5432                │ HTTP POST /scan {gsUri}     │ 127.0.0.1:5432
+         │                               │ (OIDC, run.invoker)         │
+         │            ┌──────────────────▼─────────────────────┐       │
+         │            │  Cloud Run: scanner (privé)             │       │
+         │            │  - app FastAPI  → { infected, ... }     │       │
+         │            │  - clamav sidecar (clamd:3310)          │──reads──▶ GCS
+         │            │    min-instances=1 (signatures chaudes) │       │
+         │            └─────────────────────────────────────────┘       │
+         ▼                                                              ▼
    ┌───────────────────────────  Cloud SQL (PostgreSQL)  ───────────────────────────┐
    │  JPA + Flyway (migrations au démarrage)                                          │
    └─────────────────────────────────────────────────────────────────────────────────┘
 
 Dead-letter : Pub/Sub topic scan-requests-dlq (après MAX_ATTEMPTS livraisons).
 Secret Manager : mot de passe DB (praxedo-db-password).
-Artifact Registry : dépôt Docker des images.
+Artifact Registry : dépôt Docker des images (backend + scanner).
 ```
 
 - **`api`** (public) : sert `/api/**`. L'authentification se fait **dans l'application** via l'en-tête
   `X-API-Key` ; le service Cloud Run est ouvert (`allUsers` → `run.invoker`). Génère les URLs signées V4
   (upload/download), publie les demandes de rescan sur Pub/Sub, lit/écrit les métadonnées en Cloud SQL.
-- **`worker`** (privé) : reçoit le push Pub/Sub sur `POST /internal/scan-events`, lit l'objet depuis GCS,
-  le scanne via **ClamAV** (sidecar, `localhost:3310`), écrit le verdict en Cloud SQL. `min-instances=1`
-  et ~2Gi de mémoire car ClamAV charge sa base de signatures au démarrage.
+- **`worker`** (privé, **léger**) : reçoit le push Pub/Sub sur `POST /internal/scan-events`, **appelle le
+  scanner** en HTTP (`POST /scan {gsUri}`, jeton OIDC) et écrit le verdict renvoyé en Cloud SQL. Plus de
+  ClamAV ici → `min-instances=0` (scale-to-zero), 2 conteneurs (app + Cloud SQL proxy).
+- **`scanner`** (privé, dépôt `praxedo-upload-scanner`) : `POST /scan {gsUri}` → lit l'objet depuis GCS →
+  ClamAV → renvoie `{ infected, engine, threatName }`. `min-instances=1` (~2Gi) car ClamAV charge sa base
+  de signatures. **N'écrit jamais en base** ; seul le worker le fait (voir ADR **D15**).
 
 Le même topic `scan-requests` transporte **deux** formes de message, toutes deux gérées par
 `/internal/scan-events` : la notification GCS `OBJECT_FINALIZE` (attribut `objectId` = storageKey,
@@ -61,8 +69,9 @@ de code. Comme les deux services sont multi-conteneurs, ils sont décrits en **Y
 | `../Dockerfile` | Image multi-stage (build Maven/JDK 21 → runtime JRE 21), fat jar, port 8080. |
 | `Makefile` | Toutes les cibles gcloud paramétrées par variables (voir en tête du fichier). |
 | `api-service.yaml` | Manifeste Cloud Run du service `api` (app + proxy). Template `${...}` rendu par envsubst. |
-| `worker-service.yaml` | Manifeste Cloud Run du service `worker` (app + ClamAV + proxy). |
+| `worker-service.yaml` | Manifeste Cloud Run du service `worker` (app + Cloud SQL proxy ; appelle le scanner). |
 | `gcs-cors.json` | Politique CORS du bucket (PUT/GET depuis l'origine de l'UI). |
+| *(dépôt `praxedo-upload-scanner`)* | Le service `scanner` a son propre `deploy/` (manifeste + Makefile). |
 | `../.github/workflows/deploy.yml` | CI/CD : test + build + `make deploy` sur push `main` (WIF). |
 
 ## Prérequis
@@ -97,12 +106,22 @@ make bootstrap PROJECT_ID=$PROJECT_ID REGION=$REGION
 DB_PASSWORD='choisir-un-mot-de-passe' \
   make infra PROJECT_ID=$PROJECT_ID REGION=$REGION UI_ORIGIN=$UI_ORIGIN
 
-# 4) Construire l'image, déployer api + worker, câbler la souscription push
+# 4) Déployer le SCANNER d'abord (dépôt praxedo-upload-scanner), car le worker
+#    résout SCANNER_URL depuis le service scanner déployé.
+( cd ../../praxedo-upload-scanner/deploy && \
+  make all PROJECT_ID=$PROJECT_ID REGION=$REGION )   # scanner-sa + build-push + deploy + iam
+
+# 5) Construire l'image backend, déployer api + worker, câbler la souscription push
 make deploy PROJECT_ID=$PROJECT_ID REGION=$REGION UI_ORIGIN=$UI_ORIGIN
 ```
 
 `make deploy` enchaîne `build-push` → `deploy-api` → `deploy-worker` → `pubsub-push`.
-La souscription push est créée **après** le worker car son `push-endpoint` est l'URL du worker.
+`deploy-worker` **résout `SCANNER_URL`** via `gcloud run services describe praxedo-scanner` et échoue
+explicitement si le scanner n'est pas encore déployé (étape 4). La souscription push est créée **après**
+le worker car son `push-endpoint` est l'URL du worker.
+
+> **Ordre inter-dépôts** : `make infra` (crée le SA `praxedo-worker`) → **scanner** `make all` (le
+> `iam` du scanner accorde `run.invoker` au SA du worker) → **backend** `make deploy`.
 
 Vérifier la configuration résolue à tout moment : `make config PROJECT_ID=$PROJECT_ID`.
 
@@ -152,8 +171,9 @@ et un endpoint d'administration ; hors périmètre de cet outillage.
 
 - **Flyway** s'exécute au démarrage des deux services (même image, profil `gcp`). Les migrations prennent un
   verrou côté Postgres : des démarrages concurrents sont sûrs (l'un attend l'autre).
-- **Coût du worker** : `min-instances=1` + `cpu-throttling=false` → une instance toujours chaude
-  (4 vCPU / 4Gi = somme des conteneurs). Ajustable dans `worker-service.yaml` selon la taille des signatures.
+- **Coût** : le **worker** est désormais léger (`min-instances=0`, 2 vCPU / 2Gi = app + Cloud SQL proxy) et
+  scale à zéro. La charge « chaude » (base de signatures ClamAV) est portée par le **scanner**
+  (`min-instances=1` + `cpu-throttling=false`, ~2Gi), ajustable dans son `scanner-service.yaml`.
 - **CI/CD** : le workflow suppose l'infra déjà provisionnée (étapes 1–3 ci-dessus faites une fois à la main) ;
   chaque push `main` ne fait que tester, builder et redéployer (`make deploy`). Secrets/variables requis :
   voir l'en-tête de `../.github/workflows/deploy.yml`.

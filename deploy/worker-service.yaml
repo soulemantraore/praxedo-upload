@@ -1,13 +1,15 @@
 # =====================================================================
 # Cloud Run service: praxedo-worker
-# Three containers:
+# Two containers:
 #   - app             : the Spring Boot application (profile gcp).
-#                       Receives the Pub/Sub push at /internal/scan-events,
-#                       reads the object from GCS, scans it via clamd, writes
-#                       the verdict to Cloud SQL.
-#   - clamav          : ClamAV daemon (clamd) on 127.0.0.1:3310. Loads a large
-#                       signature database at startup -> min-instances=1, 2Gi.
+#                       Receives the Pub/Sub push at /internal/scan-events, then
+#                       calls the private scanner service over HTTP (OIDC) with
+#                       the object's gs:// URI, and writes the verdict it returns
+#                       to Cloud SQL. The worker never scans bytes itself.
 #   - cloud-sql-proxy : Cloud SQL Auth Proxy, Postgres on localhost:5432.
+#
+# ClamAV no longer lives here: scanning moved to the separate praxedo-scanner
+# service. The worker is therefore light and may scale to zero.
 #
 # The worker is NOT public: ingress is open so Pub/Sub can reach it over the
 # internet, but only the push subscription's service account is granted
@@ -17,8 +19,7 @@
 # "gcloud run services replace". Placeholders: ${...}.
 #
 # Resource note: Cloud Run bills the SUM of all container limits. Here that is
-# 4 vCPU / 4Gi (app 1/1Gi + clamav 2/2Gi + proxy 1/1Gi), a valid instance size.
-# Tune down if your signature set is smaller.
+# 2 vCPU / 2Gi (app 1/1Gi + proxy 1/1Gi).
 # =====================================================================
 apiVersion: serving.knative.dev/v1
 kind: Service
@@ -34,17 +35,16 @@ spec:
   template:
     metadata:
       annotations:
-        # Keep one warm instance: reloading the ClamAV DB on every cold start
-        # would make scans slow and expensive.
-        autoscaling.knative.dev/minScale: "1"
+        # No warm signature DB to keep any more (ClamAV moved to the scanner);
+        # the worker can scale to zero. Cold starts are absorbed by Pub/Sub retries.
+        autoscaling.knative.dev/minScale: "0"
         autoscaling.knative.dev/maxScale: "5"
-        # CPU always allocated (background scan work, warm sidecars).
-        run.googleapis.com/cpu-throttling: "false"
-        # Start the app only once both sidecars report healthy.
-        run.googleapis.com/container-dependencies: '{"app":["clamav","cloud-sql-proxy"]}'
+        # Start the app only once the Cloud SQL proxy reports healthy.
+        run.googleapis.com/container-dependencies: '{"app":["cloud-sql-proxy"]}'
     spec:
       serviceAccountName: ${WORKER_SA}
-      # Scans of large files can be slow; give the push request a wide budget.
+      # A remote scan can be slow; keep this >= the scanner read-timeout and
+      # <= the Pub/Sub push ack deadline (600s).
       timeoutSeconds: 600
       containers:
         # ---- Ingress container: the application ----
@@ -64,10 +64,14 @@ spec:
               value: ${GCS_BUCKET}
             - name: PUBSUB_SCAN_TOPIC
               value: ${PUBSUB_SCAN_TOPIC}
-            - name: CLAMAV_HOST
-              value: "127.0.0.1"
-            - name: CLAMAV_PORT
-              value: "3310"
+            # Private scanner service. SCANNER_AUDIENCE is the OIDC token audience
+            # (the scanner URL); OIDC is enabled in production.
+            - name: SCANNER_URL
+              value: ${SCANNER_URL}
+            - name: SCANNER_AUDIENCE
+              value: ${SCANNER_AUDIENCE}
+            - name: SCANNER_OIDC_ENABLED
+              value: "true"
             - name: DB_URL
               value: jdbc:postgresql://127.0.0.1:5432/${DB_NAME}
             - name: DB_USER
@@ -90,20 +94,6 @@ spec:
             tcpSocket:
               port: 8080
             periodSeconds: 30
-        # ---- Sidecar: ClamAV daemon (clamd on 127.0.0.1:3310) ----
-        - name: clamav
-          image: ${CLAMAV_IMAGE}
-          resources:
-            limits:
-              cpu: "2"
-              memory: 2Gi
-          # clamd only starts listening once the signature DB is loaded; give it
-          # generous time (up to ~10 min on a fresh freshclam download).
-          startupProbe:
-            tcpSocket:
-              port: 3310
-            periodSeconds: 15
-            failureThreshold: 40
         # ---- Sidecar: Cloud SQL Auth Proxy (localhost:5432) ----
         - name: cloud-sql-proxy
           image: ${PROXY_IMAGE}

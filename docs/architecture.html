@@ -328,7 +328,7 @@
       <span class="chip">Spring Boot 3.3</span>
       <span class="chip">Architecture hexagonale</span>
       <span class="chip">GCP / Cloud Run</span>
-      <span class="chip">ClamAV</span>
+      <span class="chip">Scanner Python + ClamAV</span>
       <span class="chip">PostgreSQL + Flyway</span>
       <span class="chip">Pub/Sub</span>
     </div>
@@ -444,7 +444,7 @@
             <div class="maprow">
               <div class="impl"><b>GcsFileStorage</b> &rarr; FileStorage</div>
               <div class="impl"><b>Jpa*Repository</b> (Cloud SQL) &rarr; les 2 repos</div>
-              <div class="impl"><b>ClamavScanner</b> &rarr; AntivirusScanner</div>
+              <div class="impl"><b>RemoteScannerClient</b> &rarr; AntivirusScanner</div>
               <div class="impl"><b>PubSubScanQueue</b> &rarr; ScanQueue</div>
               <div class="impl"><b>UuidIdGenerator</b> &rarr; IdGenerator</div>
             </div>
@@ -488,8 +488,8 @@
         <div class="step scan">
           <div class="num">4</div>
           <div class="s-title">Analyse</div>
-          <div class="s-ep">FileScanService &rarr; ClamAV</div>
-          <div class="s-desc">Lit le contenu via FileStorage, l'envoie a clamd, statue CLEAN ou INFECTED, persiste le verdict.</div>
+          <div class="s-ep">FileScanService &rarr; scanner externe</div>
+          <div class="s-desc">Appelle le service scanner (HTTP, OIDC) avec l'URI GCS ; celui-ci lit GCS et scanne via ClamAV. Le worker statue CLEAN ou INFECTED depuis la reponse et persiste le verdict.</div>
         </div>
         <div class="step serve">
           <div class="num">5</div>
@@ -530,7 +530,7 @@
           <tr><td class="mono">FileStorage</td><td><span class="mono">LocalFileStorage</span> (disque + proxy)</td><td><span class="mono">GcsFileStorage</span> (URLs signees V4)</td></tr>
           <tr><td class="mono">FileMetadataRepository</td><td><span class="mono">InMemoryFileMetadataRepository</span></td><td><span class="mono">JpaFileMetadataRepository</span> (Cloud SQL)</td></tr>
           <tr><td class="mono">ApiClientRepository</td><td><span class="mono">InMemoryApiClientRepository</span></td><td><span class="mono">JpaApiClientRepository</span> (Cloud SQL)</td></tr>
-          <tr><td class="mono">AntivirusScanner</td><td><span class="mono">FakeAntivirusScanner</span> (detecte EICAR)</td><td><span class="mono">ClamavScanner</span> (clamd reel)</td></tr>
+          <tr><td class="mono">AntivirusScanner</td><td><span class="mono">FakeAntivirusScanner</span> (detecte EICAR)</td><td><span class="mono">RemoteScannerClient</span> (scanner HTTP + ClamAV)</td></tr>
           <tr><td class="mono">ScanQueue</td><td><span class="mono">SynchronousScanQueue</span> (test) / <span class="mono">InProcessScanQueue</span> (local)</td><td><span class="mono">PubSubScanQueue</span> (+ DLQ)</td></tr>
           <tr><td class="mono">IdGenerator</td><td colspan="2"><span class="mono">UuidIdGenerator</span> &mdash; commun aux trois profils</td></tr>
         </tbody>
@@ -546,10 +546,11 @@
   <!-- 5. Topologie de deploiement -->
   <section class="section" id="deploiement">
     <div class="eyebrow">&sect;5 &nbsp;Topologie de deploiement (GCP)<span class="rule"></span></div>
-    <h2 class="title">Deux services Cloud Run, une file au milieu</h2>
-    <p class="lead prose">Le plan de service (<span class="mono">api</span>) et le plan d'analyse
-      (<span class="mono">worker</span>) sont separes : ils s'echelonnent independamment, et une
-      analyse lourde ne penalise jamais une requete de service.</p>
+    <h2 class="title">Trois services Cloud Run, une file au milieu</h2>
+    <p class="lead prose">Le plan de service (<span class="mono">api</span>), le plan d'orchestration
+      (<span class="mono">worker</span>) et le plan d'analyse (<span class="mono">scanner</span>) sont
+      separes : ils s'echelonnent independamment, et une analyse lourde ne penalise jamais une requete
+      de service. Le scanner est un service autonome (depot separe) ; il ne touche jamais la base.</p>
 
     <div class="figure" style="margin-top:20px" role="img"
          aria-label="Topologie : le navigateur parle au service api et depose sur GCS ; GCS notifie Pub/Sub qui pousse vers le worker ; les deux services partagent Cloud SQL.">
@@ -570,16 +571,23 @@
           </div>
           <div class="svc run">
             <h4>worker <span class="badge">Cloud Run</span></h4>
-            <p>Recoit le push Pub/Sub sur /internal/scan-events, lit GCS, scanne, ecrit le verdict. min-instances=1 (ClamAV chaud).</p>
+            <p>Recoit le push Pub/Sub sur /internal/scan-events, appelle le scanner (HTTP, OIDC) et ecrit le verdict. Leger : min-instances=0 (scale-to-zero).</p>
             <div class="containers">
               <div class="ctn"><span class="dot app"></span> app (profil gcp)</div>
-              <div class="ctn"><span class="dot av"></span> ClamAV (clamd, sidecar)</div>
               <div class="ctn"><span class="dot db"></span> Cloud SQL Auth Proxy</div>
+            </div>
+          </div>
+          <div class="svc run">
+            <h4>scanner <span class="badge">Cloud Run</span></h4>
+            <p>Prive. POST /scan {gsUri} &rarr; lit GCS, scanne via ClamAV, renvoie le verdict. min-instances=1 (base de signatures chaude). Depot separe.</p>
+            <div class="containers">
+              <div class="ctn"><span class="dot app"></span> app FastAPI (Python)</div>
+              <div class="ctn"><span class="dot av"></span> ClamAV (clamd, sidecar)</div>
             </div>
           </div>
         </div>
 
-        <div class="flowhint" aria-hidden="true">GCS &nbsp;OBJECT_FINALIZE&nbsp; &rarr; &nbsp;Pub/Sub&nbsp; &rarr; &nbsp;push OIDC vers le worker</div>
+        <div class="flowhint" aria-hidden="true">GCS &nbsp;OBJECT_FINALIZE&nbsp; &rarr; &nbsp;Pub/Sub&nbsp; &rarr; &nbsp;push OIDC vers le worker&nbsp; &rarr; &nbsp;HTTP OIDC vers le scanner</div>
 
         <div class="managed">
           <div class="infra"><div class="m-t">Cloud Storage</div><div class="m-s">bucket des fichiers + notification de finalisation</div></div>
@@ -588,7 +596,7 @@
         </div>
 
       </div>
-      <div class="figcap">Schema 3 &mdash; Topologie Cloud Run. Le worker n'est pas public : seule la souscription push (jeton OIDC) l'invoque.</div>
+      <div class="figcap">Schema 3 &mdash; Topologie Cloud Run (3 services). worker et scanner ne sont pas publics : le worker n'est invoque que par la souscription push (OIDC), le scanner que par le worker (OIDC).</div>
     </div>
   </section>
 
@@ -637,11 +645,12 @@
 
       <div class="choice">
         <div class="c-n">05</div>
-        <h3>ClamAV en sidecar, protocole a la main</h3>
-        <p class="c-why">Le worker embarque ClamAV en conteneur voisin ; l'app dialogue avec clamd
-          en <span class="mono">INSTREAM</span> via un petit client ecrit maison (zero dependance).
-          <b>Pourquoi</b> : latence reseau minimale, controle total du protocole, aucune librairie tierce a suivre.</p>
-        <span class="c-tag">Maitrise &middot; latence</span>
+        <h3>Scanner externalise, appel synchrone OIDC</h3>
+        <p class="c-why">L'antivirus est un service autonome (depot separe, Python + ClamAV) que le worker
+          <b>appelle</b> en HTTP (OIDC) avec l'URI GCS ; le verdict revient dans la reponse et le worker
+          seul l'ecrit en base. <b>Pourquoi</b> : antivirus reutilisable et cloisonne (aucun acces base),
+          worker allege, et aucune surface entrante usurpable (pas de faux &laquo;&nbsp;CLEAN&nbsp;&raquo;). ADR D15.</p>
+        <span class="c-tag">Cloisonnement &middot; reutilisable</span>
       </div>
 
       <div class="choice">
@@ -665,9 +674,10 @@
       <div class="choice">
         <div class="c-n">08</div>
         <h3>Tests : vrai conteneur ou mock, a bon escient</h3>
-        <p class="c-why">Testcontainers (vrai ClamAV, vrai PostgreSQL, fake-gcs) la ou <b>nous</b> ecrivons
-          le protocole ; mock la ou l'on delegue a un SDK de confiance (Pub/Sub, signature GCS).
-          <b>Pourquoi</b> : tester le risque reel sans payer des dependances a faible valeur.</p>
+        <p class="c-why">Testcontainers (vrai PostgreSQL, fake-gcs) et un stub HTTP (MockRestServiceServer)
+          pour le scanner ; le vrai ClamAV est teste cote depot scanner (pytest). Mock la ou l'on delegue
+          a un SDK de confiance (Pub/Sub, signature GCS). <b>Pourquoi</b> : tester le risque reel sans payer
+          des dependances a faible valeur.</p>
         <span class="c-tag">Strategie de test</span>
       </div>
 

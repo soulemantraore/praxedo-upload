@@ -45,6 +45,8 @@ MAX_ATTEMPTS     ?= 5
 # ---- Cloud Run services ----
 API_SERVICE      ?= praxedo-api
 WORKER_SERVICE   ?= praxedo-worker
+# The private scanner service (deployed from the praxedo-upload-scanner repo).
+SCANNER_SERVICE  ?= praxedo-scanner
 
 # ---- Service accounts ----
 API_SA_NAME      ?= praxedo-api
@@ -55,7 +57,7 @@ WORKER_SA        := $(WORKER_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
 PUSH_SA          := $(PUSH_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
 
 # ---- Sidecar images ----
-CLAMAV_IMAGE     ?= clamav/clamav-debian:latest
+# ClamAV now lives in the separate scanner service, not the worker.
 PROXY_IMAGE      ?= gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
 
 # ---- CI/CD : Workload Identity Federation + deploy service account ----
@@ -81,6 +83,8 @@ PROJECT_NUMBER  = $(shell gcloud projects describe $(PROJECT_ID) --format='value
 PUBSUB_AGENT    = service-$(PROJECT_NUMBER)@gcp-sa-pubsub.iam.gserviceaccount.com
 GCS_AGENT       = service-$(PROJECT_NUMBER)@gs-project-accounts.iam.gserviceaccount.com
 WORKER_URL      = $(shell gcloud run services describe $(WORKER_SERVICE) --region=$(REGION) --project=$(PROJECT_ID) --format='value(status.url)')
+# URL of the private scanner service (must be deployed first, from the scanner repo).
+SCANNER_URL     = $(shell gcloud run services describe $(SCANNER_SERVICE) --region=$(REGION) --project=$(PROJECT_ID) --format='value(status.url)')
 
 # Path of this Makefile / the deploy directory (works from any CWD).
 DEPLOY_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
@@ -101,9 +105,12 @@ help: ## Show this help.
 	@echo "  infra            Cloud SQL + GCS(+CORS+notification) + Pub/Sub + SAs + IAM + secrets"
 	@echo "  build-push       Build the image with Cloud Build and push to Artifact Registry"
 	@echo "  deploy-api       Render + apply the api Cloud Run service"
-	@echo "  deploy-worker    Render + apply the worker Cloud Run service (app + ClamAV + proxy)"
+	@echo "  deploy-worker    Render + apply the worker Cloud Run service (app + Cloud SQL proxy; calls the scanner)"
 	@echo "  pubsub-push      Create the authenticated push subscription to the worker"
 	@echo "  deploy           build-push + deploy-api + deploy-worker + pubsub-push"
+	@echo ""
+	@echo "  NOTE: deploy the praxedo-upload-scanner repo BEFORE deploy-worker"
+	@echo "        (the worker resolves SCANNER_URL from the deployed scanner service)."
 	@echo "  config           Print the resolved configuration"
 	@echo ""
 	@echo "CI/CD (GitHub Actions -> Cloud Run), run once:"
@@ -263,12 +270,13 @@ render-api:
 	  < $(DEPLOY_DIR)/api-service.yaml > $(DEPLOY_DIR)/.api-service.rendered.yaml
 
 render-worker:
+	@SU="$(SCANNER_URL)"; test -n "$$SU" || { echo "ERROR: scanner not deployed: $(SCANNER_SERVICE) has no URL. Deploy the praxedo-upload-scanner repo first."; exit 1; }; \
 	IMAGE_URI="$(IMAGE_URI)" WORKER_SERVICE="$(WORKER_SERVICE)" WORKER_SA="$(WORKER_SA)" \
 	GCP_PROJECT_ID="$(PROJECT_ID)" GCS_BUCKET="$(BUCKET)" PUBSUB_SCAN_TOPIC="$(TOPIC)" \
 	DB_NAME="$(DB_NAME)" DB_USER="$(DB_USER)" DB_SECRET_NAME="$(DB_SECRET_NAME)" \
 	SQL_CONNECTION_NAME="$(SQL_CONNECTION_NAME)" PROXY_IMAGE="$(PROXY_IMAGE)" \
-	CLAMAV_IMAGE="$(CLAMAV_IMAGE)" \
-	  envsubst '$$IMAGE_URI $$WORKER_SERVICE $$WORKER_SA $$GCP_PROJECT_ID $$GCS_BUCKET $$PUBSUB_SCAN_TOPIC $$DB_NAME $$DB_USER $$DB_SECRET_NAME $$SQL_CONNECTION_NAME $$PROXY_IMAGE $$CLAMAV_IMAGE' \
+	SCANNER_URL="$$SU" SCANNER_AUDIENCE="$$SU" \
+	  envsubst '$$IMAGE_URI $$WORKER_SERVICE $$WORKER_SA $$GCP_PROJECT_ID $$GCS_BUCKET $$PUBSUB_SCAN_TOPIC $$DB_NAME $$DB_USER $$DB_SECRET_NAME $$SQL_CONNECTION_NAME $$PROXY_IMAGE $$SCANNER_URL $$SCANNER_AUDIENCE' \
 	  < $(DEPLOY_DIR)/worker-service.yaml > $(DEPLOY_DIR)/.worker-service.rendered.yaml
 
 deploy-api: render-api ## Deploy the api Cloud Run service (public, X-API-Key enforced in-app).
@@ -279,7 +287,7 @@ deploy-api: render-api ## Deploy the api Cloud Run service (public, X-API-Key en
 	  --region=$(REGION) --member=allUsers \
 	  --role=roles/run.invoker --project=$(PROJECT_ID)
 
-deploy-worker: render-worker ## Deploy the worker Cloud Run service (app + ClamAV + Cloud SQL proxy).
+deploy-worker: render-worker ## Deploy the worker Cloud Run service (app + Cloud SQL proxy; calls the private scanner).
 	gcloud run services replace $(DEPLOY_DIR)/.worker-service.rendered.yaml \
 	  --region=$(REGION) --project=$(PROJECT_ID)
 

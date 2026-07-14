@@ -9,7 +9,7 @@ import com.praxedo.upload.domain.port.FileStorage;
 import com.praxedo.upload.domain.port.ScanQueue;
 import com.praxedo.upload.infrastructure.persistence.jpa.adapters.JpaApiClientRepository;
 import com.praxedo.upload.infrastructure.persistence.jpa.adapters.JpaFileMetadataRepository;
-import com.praxedo.upload.infrastructure.scan.ClamavScanner;
+import com.praxedo.upload.infrastructure.scan.RemoteScannerClient;
 import com.praxedo.upload.infrastructure.scan.PubSubScanQueue;
 import com.praxedo.upload.infrastructure.storage.gcs.GcsFileStorage;
 import org.junit.jupiter.api.Test;
@@ -41,10 +41,13 @@ class GcpProfileWiringTest {
         new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"));
 
     @DynamicPropertySource
-    static void datasource(DynamicPropertyRegistry registry) {
+    static void properties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        // Scanner distant : URL bidon + OIDC desactive (aucun appel reel ni ADC dans ce test de cablage).
+        registry.add("scanner.base-url", () -> "http://localhost:65535");
+        registry.add("scanner.oidc-enabled", () -> "false");
     }
 
     @MockBean
@@ -67,7 +70,7 @@ class GcpProfileWiringTest {
     void gcp_profile_wires_the_real_adapters() {
         assertThat(fileStorage).isInstanceOf(GcsFileStorage.class);
         assertThat(scanQueue).isInstanceOf(PubSubScanQueue.class);
-        assertThat(scanner).isInstanceOf(ClamavScanner.class);
+        assertThat(scanner).isInstanceOf(RemoteScannerClient.class);
         assertThat(fileMetadataRepository).isInstanceOf(JpaFileMetadataRepository.class);
         assertThat(apiClientRepository).isInstanceOf(JpaApiClientRepository.class);
     }

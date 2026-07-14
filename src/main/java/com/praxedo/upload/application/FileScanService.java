@@ -9,8 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.UUID;
@@ -42,8 +40,10 @@ public class FileScanService {
         Instant now = clock.instant();
         file.markScanning(now);
         repository.save(file);
-        try (InputStream content = storage.read(file.storageKey())) {
-            ScanVerdict verdict = scanner.scan(content, clock.instant());
+        try {
+            // Le scanner accede lui-meme aux octets a partir de la storageKey
+            // (en gcp : appel HTTP a un scanner externe qui lit GCS).
+            ScanVerdict verdict = scanner.scan(file.storageKey(), clock.instant());
             if (verdict.infected()) {
                 file.markInfected(verdict, clock.instant());
                 repository.save(file);
@@ -54,7 +54,7 @@ public class FileScanService {
                 repository.save(file);
                 log.info("fichier {} CLEAN", fileId);
             }
-        } catch (AntivirusScanner.ScanException | IOException e) {
+        } catch (AntivirusScanner.ScanException e) {
             file.markScanFailed(clock.instant());
             repository.save(file);
             log.error("echec technique du scan pour {} : {}", fileId, e.getMessage());

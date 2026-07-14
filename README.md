@@ -19,26 +19,28 @@ application (cas d'usage : upload, scan, query, download, reconcile, apiKey)
 domain (FileRecord + machine à états, ports/interfaces, value objects)   ← ne dépend de RIEN
 ```
 
-Le domaine ne connaît ni Spring, ni GCS, ni ClamAV : il ne dépend que de **ports** (`FileStorage`, `FileMetadataRepository`, `AntivirusScanner`, `ScanQueue`, `ApiClientRepository`, `IdGenerator`). Les adapters sont choisis par **profil Spring**.
+Le domaine ne connaît ni Spring, ni GCS, ni le scanner : il ne dépend que de **ports** (`FileStorage`, `FileMetadataRepository`, `AntivirusScanner`, `ScanQueue`, `ApiClientRepository`, `IdGenerator`). Les adapters sont choisis par **profil Spring**.
 
 ### Profils
-- **`local` / `test`** : adapters in-memory (repos), filesystem (`LocalFileStorage` + proxy HTTP simulant GCS), `FakeAntivirusScanner` (détecte la signature de test **EICAR**), scan en process. Tourne **sans aucune dépendance GCP**.
-- **`gcp`** : adapters réels, **profil démarrable de bout en bout** : `GcsFileStorage` (URLs signées V4), `JpaFileMetadataRepository`/`JpaApiClientRepository` (Cloud SQL/Postgres + Flyway), `ClamavScanner` (clamd), `PubSubScanQueue` + endpoint push `/internal/scan-events`. Requiert : credentials GCP (`GOOGLE_APPLICATION_CREDENTIALS`), un bucket, un topic, une base Postgres.
+- **`local` / `test`** : adapters in-memory (repos), filesystem (`LocalFileStorage` + proxy HTTP simulant GCS), `FakeAntivirusScanner` (détecte la signature de test **EICAR** en lisant via `FileStorage`), scan en process. Tourne **sans aucune dépendance GCP**.
+- **`gcp`** : adapters réels, **profil démarrable de bout en bout** : `GcsFileStorage` (URLs signées V4), `JpaFileMetadataRepository`/`JpaApiClientRepository` (Cloud SQL/Postgres + Flyway), `RemoteScannerClient` (appel HTTP OIDC au **service scanner externe**), `PubSubScanQueue` + endpoint push `/internal/scan-events`. Requiert : credentials GCP (`GOOGLE_APPLICATION_CREDENTIALS`), un bucket, un topic, une base Postgres, et l'URL du scanner (`SCANNER_URL`/`SCANNER_AUDIENCE`, `SCANNER_OIDC_ENABLED`).
 
 ### Flux réel (profil gcp)
 ```
 Client → GCS (upload direct, URL signée)
 GCS "object finalize" → Pub/Sub → push /internal/scan-events → scan-worker
-   scan-worker lit GCS → clamd (sidecar, localhost) → écrit le statut (Cloud SQL)
+   scan-worker → POST {scanner}/scan {gsUri} (OIDC) → [scanner externe lit GCS + ClamAV]
+   scan-worker ← { infected, engine, threatName } → écrit le statut (Cloud SQL)
 Client → GET /content : URL signée de download uniquement si CLEAN
 ```
-`clamd` n'est jamais dans notre code : c'est l'image officielle **co-localisée en sidecar** ; le worker l'appelle via le port `AntivirusScanner`.
+Le scan vit dans un **service séparé** (repo `praxedo-upload-scanner`, Python + ClamAV) : le worker l'**appelle** via le port `AntivirusScanner` et écrit lui-même le verdict — le scanner ne touche jamais la base. Voir l'ADR **D15** (raffine la topologie sidecar de D6).
 
 ### Infra réelle en local (optionnel)
-`docker-compose.yml` lance **ClamAV + émulateur Pub/Sub + PostgreSQL + émulateur GCS** pour expérimenter le flux réel :
+`docker-compose.yml` lance **le scanner (+ ClamAV) + émulateur Pub/Sub + PostgreSQL + émulateur GCS** pour expérimenter le flux réel :
 ```bash
 docker compose up -d
-JAVA_HOME=<jdk-21> mvn spring-boot:run -Dspring-boot.run.profiles=gcp
+JAVA_HOME=<jdk-21> SCANNER_URL=http://localhost:8000 SCANNER_OIDC_ENABLED=false \
+  mvn spring-boot:run -Dspring-boot.run.profiles=gcp
 ```
 (Les tests d'intégration démarrent leurs propres conteneurs via Testcontainers — pas besoin de ce compose pour `mvn test`. Un vrai GCS/Pub/Sub nécessite `GOOGLE_APPLICATION_CREDENTIALS`.)
 
@@ -110,12 +112,12 @@ JAVA_HOME=<jdk-21> mvn test
 ## Choix techniques & hypothèses (résumé — détail dans la spec)
 - **Flux asynchrone** : l'upload répond immédiatement (`PENDING`), le scan tourne en arrière-plan → tient la charge et les fichiers de tailles très variables.
 - **URLs signées direct-to-GCS** (en prod) : les octets ne transitent jamais par l'app ; le port `FileStorage` cache ce détail (adapter local = proxy HTTP).
-- **Antivirus derrière un port** : ClamAV par défaut en prod, `FakeAntivirusScanner` (EICAR) en local/test ; un adapter SaaS serait trivial à brancher.
+- **Antivirus derrière un port** : en prod, `RemoteScannerClient` appelle un **service scanner externe** (ClamAV, repo séparé) ; `FakeAntivirusScanner` (EICAR) en local/test. Un adapter SaaS serait trivial à brancher.
 - **Clés API par-client** (hachées SHA-256) + **scoping par owner** : chaque client ne voit que ses fichiers. Hypothèse : machine-to-machine ; pour des utilisateurs humains → OAuth2/JWT (évolution).
 - **Injection de dépendances stricte** (`Clock`, `IdGenerator` injectés) → tout est testable sans Spring.
 
 ## Pistes d'amélioration
-- Adapters GCP (GCS signed URLs, Cloud SQL/JPA, Pub/Sub, ClamAV sidecar) — jalons suivants.
+- Vérification applicative du jeton OIDC Pub/Sub sur `/internal/scan-events` (aujourd'hui le worker reste privé, l'IAM Cloud Run valide déjà le push) — défense en profondeur.
 - Auth OAuth2/JWT pour utilisateurs connectés ; endpoint admin de gestion des clés.
 - Exécuteur dédié (`ThreadPoolTaskExecutor`) pour le scan async local ; monitoring de la DLQ en prod.
 - Chiffrement au repos (CMEK), quotas/rate-limiting par client, webhooks de fin de scan (éviter le polling).
