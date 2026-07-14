@@ -72,9 +72,10 @@ config: ## Print the resolved configuration.
 	@echo "WORKER_SA        = $(WORKER_SA)  (granted run.invoker)"
 	@echo "BUCKET           = $(BUCKET)  (scanner gets objectViewer)"
 
-scanner-sa: ## Create the scanner runtime service account.
-	gcloud iam service-accounts create $(SCANNER_SA_NAME) \
-	  --display-name="praxedo scanner runtime" --project=$(PROJECT_ID) || true
+scanner-sa: ## Create the scanner runtime service account (idempotent).
+	@gcloud iam service-accounts describe $(SCANNER_SA) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud iam service-accounts create $(SCANNER_SA_NAME) \
+	       --display-name="praxedo scanner runtime" --project=$(PROJECT_ID)
 
 build-push: ## Build the image with Cloud Build and push to Artifact Registry.
 	gcloud builds submit $(REPO_ROOT) --tag=$(IMAGE_URI) --project=$(PROJECT_ID)

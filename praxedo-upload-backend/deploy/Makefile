@@ -60,14 +60,14 @@ PUSH_SA          := $(PUSH_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
 # directly over TLS (no Cloud SQL Auth Proxy).
 
 # ---- CI/CD : Workload Identity Federation + deploy service account ----
-# Shared by BOTH repos (backend + frontend) : one WIF provider, one deploy SA.
+# Monorepo praxedo-upload : one WIF provider + one deploy SA for all components.
 WIF_POOL         ?= github-pool
 WIF_PROVIDER     ?= github-provider
 DEPLOY_SA_NAME   ?= praxedo-deployer
 DEPLOY_SA        := $(DEPLOY_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
-# GitHub org/user allowed to authenticate, and the repos bound to the deploy SA.
+# GitHub org/user allowed to authenticate, and the repo bound to the deploy SA.
 GITHUB_OWNER     ?= soulemantraore
-GITHUB_REPOS     ?= soulemantraore/praxedo-upload-backend,soulemantraore/praxedo-upload-ui
+GITHUB_REPOS     ?= soulemantraore/praxedo-upload
 # Helpers to iterate over the comma-separated repo list inside recipes.
 comma            := ,
 empty            :=
@@ -143,12 +143,14 @@ enable-apis: ## Enable required Google Cloud APIs.
 	  --project=$(PROJECT_ID)
 
 # ---------------------------------------------------------------------
-bootstrap: ## Create the Artifact Registry Docker repository.
-	gcloud artifacts repositories create $(REPO) \
-	  --repository-format=docker \
-	  --location=$(REGION) \
-	  --description="praxedo upload backend images" \
-	  --project=$(PROJECT_ID) || true
+bootstrap: ## Create the Artifact Registry Docker repository (idempotent).
+	@gcloud artifacts repositories describe $(REPO) \
+	  --location=$(REGION) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud artifacts repositories create $(REPO) \
+	       --repository-format=docker \
+	       --location=$(REGION) \
+	       --description="praxedo upload backend images" \
+	       --project=$(PROJECT_ID)
 
 # ---------------------------------------------------------------------
 # infra sub-targets are run in order to guarantee dependencies.
@@ -159,18 +161,22 @@ infra: ## Provision all infrastructure (idempotent-friendly).
 	$(MAKE) pubsub
 	$(MAKE) iam
 
-service-accounts: ## Create the api / worker / push service accounts.
-	gcloud iam service-accounts create $(API_SA_NAME) \
-	  --display-name="praxedo api runtime" --project=$(PROJECT_ID) || true
-	gcloud iam service-accounts create $(WORKER_SA_NAME) \
-	  --display-name="praxedo worker runtime" --project=$(PROJECT_ID) || true
-	gcloud iam service-accounts create $(PUSH_SA_NAME) \
-	  --display-name="praxedo pubsub push (OIDC)" --project=$(PROJECT_ID) || true
+service-accounts: ## Create the api / worker / push service accounts (idempotent).
+	@gcloud iam service-accounts describe $(API_SA) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud iam service-accounts create $(API_SA_NAME) \
+	       --display-name="praxedo api runtime" --project=$(PROJECT_ID)
+	@gcloud iam service-accounts describe $(WORKER_SA) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud iam service-accounts create $(WORKER_SA_NAME) \
+	       --display-name="praxedo worker runtime" --project=$(PROJECT_ID)
+	@gcloud iam service-accounts describe $(PUSH_SA) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud iam service-accounts create $(PUSH_SA_NAME) \
+	       --display-name="praxedo pubsub push (OIDC)" --project=$(PROJECT_ID)
 
 secrets: ## Store the Supabase DB password in Secret Manager (pass DB_PASSWORD=... from the Supabase dashboard).
 	@test -n "$$DB_PASSWORD" || { echo "ERROR: set DB_PASSWORD to your Supabase database password (Project Settings > Database)"; exit 1; }
-	gcloud secrets create $(DB_SECRET_NAME) \
-	  --replication-policy=automatic --project=$(PROJECT_ID) || true
+	@gcloud secrets describe $(DB_SECRET_NAME) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud secrets create $(DB_SECRET_NAME) \
+	       --replication-policy=automatic --project=$(PROJECT_ID)
 	@printf '%s' "$$DB_PASSWORD" | gcloud secrets versions add $(DB_SECRET_NAME) \
 	   --data-file=- --project=$(PROJECT_ID); \
 	 echo "Supabase DB password stored in Secret Manager secret '$(DB_SECRET_NAME)' (latest)."
@@ -178,29 +184,35 @@ secrets: ## Store the Supabase DB password in Secret Manager (pass DB_PASSWORD=.
 # Supabase is provisioned outside GCP (dashboard) -> no "sql" target here:
 # store the password with "make secrets" and set DB_URL.
 
-bucket: ## Create the GCS bucket and apply the CORS policy for browser signed URLs.
-	gcloud storage buckets create gs://$(BUCKET) \
-	  --location=$(REGION) \
-	  --uniform-bucket-level-access \
-	  --project=$(PROJECT_ID) || true
+bucket: ## Create the GCS bucket and apply the CORS policy for browser signed URLs (idempotent).
+	@gcloud storage buckets describe gs://$(BUCKET) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud storage buckets create gs://$(BUCKET) \
+	       --location=$(REGION) \
+	       --uniform-bucket-level-access \
+	       --project=$(PROJECT_ID)
 	sed 's|https://your-ui-origin.example.com|$(UI_ORIGIN)|g' \
 	  $(DEPLOY_DIR)/gcs-cors.json > $(DEPLOY_DIR)/.gcs-cors.rendered.json
 	gcloud storage buckets update gs://$(BUCKET) \
 	  --cors-file=$(DEPLOY_DIR)/.gcs-cors.rendered.json --project=$(PROJECT_ID)
 
-pubsub: ## Create the scan topic + DLQ and wire the GCS OBJECT_FINALIZE notification.
-	gcloud pubsub topics create $(TOPIC) --project=$(PROJECT_ID) || true
-	gcloud pubsub topics create $(DLQ) --project=$(PROJECT_ID) || true
+pubsub: ## Create the scan topic + DLQ and wire the GCS OBJECT_FINALIZE notification (idempotent).
+	@gcloud pubsub topics describe $(TOPIC) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud pubsub topics create $(TOPIC) --project=$(PROJECT_ID)
+	@gcloud pubsub topics describe $(DLQ) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud pubsub topics create $(DLQ) --project=$(PROJECT_ID)
 	# Allow the GCS service agent to publish object-finalize notifications.
 	gcloud pubsub topics add-iam-policy-binding $(TOPIC) \
 	  --member="serviceAccount:$(GCS_AGENT)" \
 	  --role=roles/pubsub.publisher --project=$(PROJECT_ID)
 	# Notify the scan topic when an object is finalized (uploaded) in the bucket.
-	gcloud storage buckets notifications create gs://$(BUCKET) \
-	  --topic=$(TOPIC) \
-	  --event-types=OBJECT_FINALIZE \
-	  --payload-format=json \
-	  --project=$(PROJECT_ID) || true
+	# (list|grep guard: notifications create is NOT idempotent -- it piles up duplicates.)
+	@gcloud storage buckets notifications list gs://$(BUCKET) --project=$(PROJECT_ID) 2>/dev/null \
+	  | grep -q "topics/$(TOPIC)" \
+	  || gcloud storage buckets notifications create gs://$(BUCKET) \
+	       --topic=$(TOPIC) \
+	       --event-types=OBJECT_FINALIZE \
+	       --payload-format=json \
+	       --project=$(PROJECT_ID)
 
 iam: ## Bind least-privilege IAM roles for both runtime service accounts.
 	# --- api: sign V4 URLs (signBlob on itself), publish scans, object metadata,
@@ -217,6 +229,7 @@ iam: ## Bind least-privilege IAM roles for both runtime service accounts.
 	gcloud secrets add-iam-policy-binding $(DB_SECRET_NAME) \
 	  --member="serviceAccount:$(API_SA)" \
 	  --role=roles/secretmanager.secretAccessor --project=$(PROJECT_ID)
+
 	# --- worker: read/delete objects, read the DB secret (Supabase over TLS).
 	gcloud storage buckets add-iam-policy-binding gs://$(BUCKET) \
 	  --member="serviceAccount:$(WORKER_SA)" \
@@ -224,6 +237,7 @@ iam: ## Bind least-privilege IAM roles for both runtime service accounts.
 	gcloud secrets add-iam-policy-binding $(DB_SECRET_NAME) \
 	  --member="serviceAccount:$(WORKER_SA)" \
 	  --role=roles/secretmanager.secretAccessor --project=$(PROJECT_ID)
+
 	# --- Pub/Sub service agent: mint OIDC tokens as the push SA and publish to the DLQ.
 	gcloud iam service-accounts add-iam-policy-binding $(PUSH_SA) \
 	  --member="serviceAccount:$(PUBSUB_AGENT)" \
@@ -309,8 +323,9 @@ deploy: ## Build + push + deploy both services + wire the push subscription.
 # secrets (GCP_WIF_PROVIDER, GCP_DEPLOY_SA) in BOTH GitHub repos.
 cicd-setup: ## Create the deploy SA + WIF provider and authorize the GitHub repos.
 	# 1) Deploy service account, impersonated by GitHub Actions via WIF.
-	gcloud iam service-accounts create $(DEPLOY_SA_NAME) \
-	  --display-name="praxedo GitHub Actions deployer" --project=$(PROJECT_ID) || true
+	@gcloud iam service-accounts describe $(DEPLOY_SA) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud iam service-accounts create $(DEPLOY_SA_NAME) \
+	       --display-name="praxedo GitHub Actions deployer" --project=$(PROJECT_ID)
 	# 2) Deployment roles (union of what `make deploy` needs, backend + frontend).
 	for role in roles/run.admin roles/artifactregistry.writer roles/cloudbuild.builds.editor \
 	            roles/iam.serviceAccountUser roles/pubsub.admin roles/storage.admin; do \
@@ -318,14 +333,18 @@ cicd-setup: ## Create the deploy SA + WIF provider and authorize the GitHub repo
 	    --member="serviceAccount:$(DEPLOY_SA)" --role=$$role --condition=None >/dev/null; \
 	done
 	# 3) Workload Identity pool + GitHub OIDC provider (restricted to the owner).
-	gcloud iam workload-identity-pools create $(WIF_POOL) \
-	  --location=global --display-name="GitHub Actions" --project=$(PROJECT_ID) || true
-	gcloud iam workload-identity-pools providers create-oidc $(WIF_PROVIDER) \
-	  --location=global --workload-identity-pool=$(WIF_POOL) --display-name="GitHub OIDC" \
-	  --issuer-uri="https://token.actions.githubusercontent.com" \
-	  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
-	  --attribute-condition="assertion.repository_owner=='$(GITHUB_OWNER)'" \
-	  --project=$(PROJECT_ID) || true
+	@gcloud iam workload-identity-pools describe $(WIF_POOL) \
+	  --location=global --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud iam workload-identity-pools create $(WIF_POOL) \
+	       --location=global --display-name="GitHub Actions" --project=$(PROJECT_ID)
+	@gcloud iam workload-identity-pools providers describe $(WIF_PROVIDER) \
+	  --location=global --workload-identity-pool=$(WIF_POOL) --project=$(PROJECT_ID) >/dev/null 2>&1 \
+	  || gcloud iam workload-identity-pools providers create-oidc $(WIF_PROVIDER) \
+	       --location=global --workload-identity-pool=$(WIF_POOL) --display-name="GitHub OIDC" \
+	       --issuer-uri="https://token.actions.githubusercontent.com" \
+	       --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
+	       --attribute-condition="assertion.repository_owner=='$(GITHUB_OWNER)'" \
+	       --project=$(PROJECT_ID)
 	# 4) Let each GitHub repo impersonate the deploy SA.
 	@for repo in $(subst $(comma),$(space),$(GITHUB_REPOS)); do \
 	  echo "  authorizing $$repo"; \
