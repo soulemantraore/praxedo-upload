@@ -1,4 +1,4 @@
-package com.praxedo.upload.infrastructure.web;
+package com.praxedo.upload.infrastructure.web.controllers;
 
 import com.praxedo.upload.application.FileDownloadService;
 import com.praxedo.upload.application.FileQueryService;
@@ -12,6 +12,7 @@ import com.praxedo.upload.domain.file.PageResult;
 import com.praxedo.upload.domain.file.StatusCounts;
 import com.praxedo.upload.domain.port.ScanQueue;
 import com.praxedo.upload.infrastructure.web.dto.UploadRequests.RegisterFileRequest;
+import com.praxedo.upload.infrastructure.web.helpers.AuthenticatedClient;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

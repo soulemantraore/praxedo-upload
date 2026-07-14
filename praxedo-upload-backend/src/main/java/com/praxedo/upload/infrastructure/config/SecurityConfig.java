@@ -1,7 +1,7 @@
 package com.praxedo.upload.infrastructure.config;
 
 import com.praxedo.upload.application.ApiKeyService;
-import com.praxedo.upload.infrastructure.web.ApiKeyAuthFilter;
+import com.praxedo.upload.infrastructure.web.helpers.ApiKeyAuthFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

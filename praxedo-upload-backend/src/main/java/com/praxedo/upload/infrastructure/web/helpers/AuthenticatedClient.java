@@ -1,4 +1,4 @@
-package com.praxedo.upload.infrastructure.web;
+package com.praxedo.upload.infrastructure.web.helpers;
 
 import java.util.UUID;
 

@@ -1,4 +1,4 @@
-package com.praxedo.upload.infrastructure.web;
+package com.praxedo.upload.infrastructure.web.helpers;
 
 import com.praxedo.upload.application.ApiKeyService;
 import jakarta.servlet.FilterChain;
