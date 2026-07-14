@@ -1,4 +1,4 @@
-package com.praxedo.upload.infrastructure.web;
+package com.praxedo.upload.infrastructure.web.controllers;
 
 import com.praxedo.upload.application.FileScanService;
 import com.praxedo.upload.domain.file.FileRecord;

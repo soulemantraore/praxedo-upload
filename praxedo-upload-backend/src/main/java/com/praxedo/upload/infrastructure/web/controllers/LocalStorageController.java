@@ -1,4 +1,4 @@
-package com.praxedo.upload.infrastructure.web;
+package com.praxedo.upload.infrastructure.web.controllers;
 
 import com.praxedo.upload.infrastructure.storage.local.LocalFileStorage;
 import jakarta.servlet.http.HttpServletRequest;
