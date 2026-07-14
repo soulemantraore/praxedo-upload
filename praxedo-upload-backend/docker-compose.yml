@@ -41,7 +41,7 @@ services:
       - "8085:8085"
 
   postgres:
-    # Cloud SQL en local.
+    # Postgres local pour le dev (equivalent de la base Supabase en production).
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: praxedo

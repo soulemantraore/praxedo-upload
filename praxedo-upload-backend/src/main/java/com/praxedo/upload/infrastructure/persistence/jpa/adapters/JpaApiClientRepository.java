@@ -9,7 +9,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
 
-/** Adapter par defaut du port ApiClientRepository : JPA / Cloud SQL (profil gcp). */
+/** Adapter par defaut du port ApiClientRepository : JPA / Postgres (Supabase, profil gcp). */
 @Repository
 @Profile("gcp")
 public class JpaApiClientRepository implements ApiClientRepository {

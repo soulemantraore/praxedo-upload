@@ -1,12 +1,11 @@
 # =====================================================================
 # Cloud Run service: praxedo-api
-# Two containers:
-#   - app             : the Spring Boot application (profile gcp), serves /api/**
-#   - cloud-sql-proxy : Cloud SQL Auth Proxy, exposes Postgres on localhost:5432
+# Single container:
+#   - app : the Spring Boot application (profile gcp), serves /api/**
 #
-# Why a proxy sidecar: the application uses the stock PostgreSQL JDBC driver
-# (TCP only). Rather than add the Cloud SQL SocketFactory to the app, the proxy
-# gives an IAM-authenticated TCP endpoint at 127.0.0.1:5432 with no code change.
+# Database: Supabase (managed Postgres) reached directly over TLS with the stock
+# PostgreSQL JDBC driver (DB_URL carries the host + sslmode=require). No Cloud SQL
+# Auth Proxy sidecar is needed anymore.
 #
 # This file is a template rendered by "make deploy-api" via envsubst, then
 # applied with "gcloud run services replace". Placeholders: ${...}.
@@ -29,8 +28,6 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "0"
         autoscaling.knative.dev/maxScale: "10"
-        # Start the app only once the proxy sidecar reports healthy.
-        run.googleapis.com/container-dependencies: '{"app":["cloud-sql-proxy"]}'
     spec:
       serviceAccountName: ${API_SA}
       timeoutSeconds: 60
@@ -52,8 +49,10 @@ spec:
               value: ${GCS_BUCKET}
             - name: PUBSUB_SCAN_TOPIC
               value: ${PUBSUB_SCAN_TOPIC}
+            # Supabase Postgres connection string (host + sslmode=require), e.g.
+            # jdbc:postgresql://<project>.pooler.supabase.com:5432/postgres?sslmode=require
             - name: DB_URL
-              value: jdbc:postgresql://127.0.0.1:5432/${DB_NAME}
+              value: ${DB_URL}
             - name: DB_USER
               value: ${DB_USER}
             - name: DB_PASSWORD
@@ -74,19 +73,3 @@ spec:
             tcpSocket:
               port: 8080
             periodSeconds: 30
-        # ---- Sidecar: Cloud SQL Auth Proxy (localhost:5432) ----
-        - name: cloud-sql-proxy
-          image: ${PROXY_IMAGE}
-          args:
-            - "--port=5432"
-            - "--address=127.0.0.1"
-            - "${SQL_CONNECTION_NAME}"
-          resources:
-            limits:
-              cpu: "1"
-              memory: 512Mi
-          startupProbe:
-            tcpSocket:
-              port: 5432
-            periodSeconds: 10
-            failureThreshold: 30

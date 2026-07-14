@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/** Adapter par defaut du port FileMetadataRepository : JPA / Cloud SQL (profil gcp). */
+/** Adapter par defaut du port FileMetadataRepository : JPA / Postgres (Supabase, profil gcp). */
 @Repository
 @Profile("gcp")
 public class JpaFileMetadataRepository implements FileMetadataRepository {

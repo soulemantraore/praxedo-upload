@@ -1,4 +1,5 @@
-# Profil "gcp" : adapters reels (scanner distant, Pub/Sub, JPA/Cloud SQL, GCS).
+# Profil "gcp" : adapters reels (scanner distant, Pub/Sub, JPA/Supabase Postgres, GCS).
+# DB_URL = connection string Supabase (host + sslmode=require) injectee au deploiement.
 storage:
   gcs:
     bucket: ${GCS_BUCKET:praxedo-upload-files}
