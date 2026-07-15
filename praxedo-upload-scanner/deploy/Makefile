@@ -36,8 +36,8 @@ SCANNER_SA       := $(SCANNER_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
 WORKER_SA_NAME   ?= praxedo-worker
 WORKER_SA        := $(WORKER_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
 
-# ---- GCS bucket the scanner reads from (same default as the backend Makefile) ----
-BUCKET           ?= $(PROJECT_ID)-praxedo-files
+# ---- GCS bucket the scanner reads from (must match the backend Makefile's BUCKET) ----
+BUCKET           ?= praxedo-files
 
 # ---- Sidecar image ----
 CLAMAV_IMAGE     ?= clamav/clamav-debian:latest
@@ -77,11 +77,15 @@ scanner-sa: ## Create the scanner runtime service account (idempotent).
 	  || gcloud iam service-accounts create $(SCANNER_SA_NAME) \
 	       --display-name="praxedo scanner runtime" --project=$(PROJECT_ID)
 
-build-push: ## Build the image with Docker and push to Artifact Registry.
-	docker build -t $(IMAGE_URI) $(REPO_ROOT)
-	docker push $(IMAGE_URI)
-	# Docker must be authenticated to $(REGION)-docker.pkg.dev first.
-	# CI logs in via docker/login-action (WIF access token); locally, run once:
+build-push: ## Build the linux/amd64 image with Docker buildx and push to Artifact Registry.
+	# Cloud Run requires linux/amd64. On Apple Silicon a plain `docker build`
+	# produces arm64, which Cloud Run rejects ("manifest ... must support
+	# amd64/linux"). buildx cross-builds amd64 (via QEMU) and pushes straight to
+	# the registry; --provenance=false keeps a single image manifest (no
+	# attestation index, which Cloud Run also rejects).
+	docker buildx build --platform linux/amd64 --provenance=false \
+	  -t $(IMAGE_URI) --push $(REPO_ROOT)
+	# Docker must be authenticated to $(REGION)-docker.pkg.dev first, once:
 	#   gcloud auth configure-docker $(REGION)-docker.pkg.dev
 
 # Two containers (app + ClamAV sidecar), so deploy imperatively with the
