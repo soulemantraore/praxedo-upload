@@ -181,4 +181,40 @@ et un endpoint d'administration ; hors périmètre de cet outillage.
 - **CI/CD** : le workflow suppose l'infra déjà provisionnée (étapes 1–3 ci-dessus faites une fois à la main) ;
   chaque push `main` ne fait que tester, builder et redéployer (`make deploy`). Secrets/variables requis :
   voir l'en-tête de `../.github/workflows/deploy.yml`.
-```
+
+## Dépannage
+
+- **`Permission denied on secret ... roles/secretmanager.secretAccessor` au déploiement** :
+  les comptes de service d'exécution (`praxedo-api@…`, `praxedo-worker@…`) n'ont pas le droit de lire
+  le secret `praxedo-db-password`. Ce binding est posé par `make iam` (inclus dans `make infra`), à lancer
+  **une fois par projet avec un compte owner** — le compte de déploiement du CI n'a **volontairement pas**
+  le droit d'écrire la policy IAM d'un secret, donc `make deploy` ne le répare pas. Correctif :
+
+  ```bash
+  # tous les bindings runtime d'un coup (secret + bucket + Pub/Sub), idempotent
+  make iam PROJECT_ID=$PROJECT_ID
+
+  # …ou ciblé sur le seul secret, pour les deux SA runtime :
+  for SA in praxedo-api praxedo-worker; do
+    gcloud secrets add-iam-policy-binding praxedo-db-password \
+      --member="serviceAccount:$SA@$PROJECT_ID.iam.gserviceaccount.com" \
+      --role=roles/secretmanager.secretAccessor --project=$PROJECT_ID
+  done
+  ```
+
+  Comptez ~10 s de propagation IAM avant de relancer `make deploy`. Le même trou se manifeste sinon sur
+  le **bucket** (au premier upload) ou **Pub/Sub** (au premier scan) si `make iam` n'a jamais tourné —
+  d'où l'intérêt de lancer `make iam`/`make infra` en entier plutôt que le seul binding du secret.
+
+- **`FATAL: (ENOIDENTIFIER) no tenant identifier provided`** (le conteneur « failed to start ») : le
+  **pooler Supabase** (`aws-*.pooler.supabase.com`, ports `:5432` **et** `:6543`) route les tenants par le
+  nom d'utilisateur `postgres.<project-ref>`. Un `DB_USER=postgres` nu est rejeté. Passer
+  `DB_USER=postgres.<project-ref>` (visible dans le dashboard Supabase → *Connect*). Le garde-fou
+  `check-db-user` (prérequis de `deploy-api`/`deploy-worker`) échoue désormais tôt et clairement dans ce cas.
+
+- **`Found non-empty schema(s) "public" but no schema history table`** (Flyway, « failed to start ») :
+  Supabase pré-remplit le schéma `public`, que Flyway refuse de migrer sans table d'historique. L'app active
+  donc `spring.flyway.baseline-on-migrate=true` + `baseline-version=0` (profil `gcp`) : Flyway crée
+  l'historique, baseline à la version 0, puis applique V1. **Pour la 1ʳᵉ migration**, préférer le
+  **session pooler** (`DB_PORT=5432`) : le transaction pooler `:6543` ne supporte pas les locks de session
+  de Flyway.
