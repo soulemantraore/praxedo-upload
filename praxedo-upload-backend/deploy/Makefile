@@ -291,7 +291,7 @@ deploy-api: check-db-user ## Deploy the api Cloud Run service (public, X-API-Key
 	  --min-instances=0 --max-instances=10 --timeout=60 \
 	  --labels=app=praxedo-upload,component=api \
 	  --startup-probe=tcpSocket.port=8080,periodSeconds=10,failureThreshold=30 \
-	  --set-env-vars=SPRING_PROFILES_ACTIVE=gcp,SERVER_PORT=8080,GCP_PROJECT_ID=$(PROJECT_ID),GCS_BUCKET=$(BUCKET),PUBSUB_SCAN_TOPIC=$(TOPIC),DB_URL=$(DB_URL),DB_USER=$(DB_USER) \
+	  --set-env-vars=SPRING_PROFILES_ACTIVE=gcp,SERVER_PORT=8080,GCP_PROJECT_ID=$(PROJECT_ID),GCS_BUCKET=$(BUCKET),PUBSUB_SCAN_TOPIC=$(TOPIC),DB_URL=$(DB_URL),DB_USER=$(DB_USER),APP_CORS_ALLOWED_ORIGINS=$(UI_ORIGIN) \
 	  --set-secrets=DB_PASSWORD=$(DB_SECRET_NAME):latest
 
 deploy-worker: check-db-user ## Deploy the worker Cloud Run service (calls the private scanner).

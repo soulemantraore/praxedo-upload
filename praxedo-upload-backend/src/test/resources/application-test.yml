@@ -2,3 +2,8 @@
 storage:
   local:
     base-dir: ${java.io.tmpdir}/praxedo-upload-test
+
+# Origine UI factice pour valider la config CORS (voir CorsConfigTest).
+app:
+  cors:
+    allowed-origins: https://praxedo-ui.example.run.app

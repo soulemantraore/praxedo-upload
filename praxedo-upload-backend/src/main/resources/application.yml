@@ -19,3 +19,10 @@ storage:
 
 scan:
   pending-ttl: PT1H
+
+app:
+  cors:
+    # Origines navigateur autorisees a appeler l'API (UI). Vide par defaut ;
+    # injectee en prod via APP_CORS_ALLOWED_ORIGINS (URL Cloud Run de l'UI, sans slash final).
+    # Plusieurs origines possibles en liste separee par des virgules.
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:}
