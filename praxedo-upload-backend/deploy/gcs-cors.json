@@ -1,6 +1,6 @@
 [
   {
-    "origin": ["https://your-ui-origin.example.com"],
+    "origin": ["https://praxedo-ui-900523019258.europe-west1.run.app"],
     "method": ["GET", "PUT", "HEAD", "OPTIONS"],
     "responseHeader": [
       "Content-Type",
