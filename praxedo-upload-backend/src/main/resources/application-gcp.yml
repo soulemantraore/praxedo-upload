@@ -17,6 +17,12 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+    # Le schema "public" de Supabase n'est pas vide (objets provisionnes hors Flyway)
+    # et n'a pas de table d'historique : Flyway s'arrete par securite. baseline-on-migrate
+    # cree l'historique ; baseline-version 0 garantit que V1 (v1 > 0) s'applique quand meme
+    # (le defaut baseline a la v1 et SAUTERAIT V1, laissant l'app sans tables car ddl-auto:none).
+    baseline-on-migrate: true
+    baseline-version: 0
 
 scanner:
   base-url: ${SCANNER_URL}

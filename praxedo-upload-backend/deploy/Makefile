@@ -99,7 +99,7 @@ REPO_ROOT  := $(abspath $(DEPLOY_DIR)/..)
 .DEFAULT_GOAL := help
 
 .PHONY: help enable-apis bootstrap service-accounts secrets sql bucket pubsub iam \
-        infra build-push deploy-api deploy-worker \
+        infra build-push check-db-user deploy-api deploy-worker \
         pubsub-push deploy config cicd-setup cicd-values cicd-github
 
 # ---------------------------------------------------------------------
@@ -164,7 +164,6 @@ bootstrap: ## Create the Artifact Registry Docker repository (idempotent).
 # infra sub-targets are run in order to guarantee dependencies.
 infra: ## Provision all infrastructure (idempotent-friendly).
 	$(MAKE) service-accounts
-	$(MAKE) secrets
 	$(MAKE) bucket
 	$(MAKE) pubsub
 	$(MAKE) iam
@@ -263,12 +262,25 @@ build-push: ## Build the image with Docker and push to Artifact Registry.
 	#   gcloud auth configure-docker $(REGION)-docker.pkg.dev
 
 # ---------------------------------------------------------------------
+# Guard (prereq of both deploys): the Supabase pooler (aws-*.pooler.supabase.com)
+# routes tenants by the "postgres.<project-ref>" username. A bare DB_USER (no
+# ".<ref>" suffix) is rejected at connect time with
+#   FATAL: (ENOIDENTIFIER) no tenant identifier provided
+# which only surfaces as a Cloud Run "container failed to start". Fail fast here.
+check-db-user:
+	@if echo "$(DB_HOST)" | grep -q 'pooler\.supabase' && ! echo "$(DB_USER)" | grep -q '\.'; then \
+	  echo "ERROR: DB_HOST=$(DB_HOST) is the Supabase pooler, but DB_USER=$(DB_USER) has no tenant suffix."; \
+	  echo "       Pass DB_USER=postgres.<project-ref>, e.g. make deploy DB_USER=postgres.abcdefgh...";  \
+	  exit 1; \
+	fi
+
+# ---------------------------------------------------------------------
 # Both services are single-container (DB reached over TLS, no sidecar), so they
 # deploy imperatively with `gcloud run deploy` -- no Knative YAML to render.
 # The env values carry no commas, so the default comma-delimited --set-env-vars
 # is safe. Cloud Run adds a default TCP startup probe on --port; we keep an
 # explicit one to preserve the generous 300s startup window (Spring Boot boot).
-deploy-api: ## Deploy the api Cloud Run service (public, X-API-Key enforced in-app).
+deploy-api: check-db-user ## Deploy the api Cloud Run service (public, X-API-Key enforced in-app).
 	# --allow-unauthenticated makes the endpoint public (grants allUsers the
 	# run.invoker role); the app still enforces the X-API-Key header itself.
 	gcloud run deploy $(API_SERVICE) \
@@ -282,7 +294,7 @@ deploy-api: ## Deploy the api Cloud Run service (public, X-API-Key enforced in-a
 	  --set-env-vars=SPRING_PROFILES_ACTIVE=gcp,SERVER_PORT=8080,GCP_PROJECT_ID=$(PROJECT_ID),GCS_BUCKET=$(BUCKET),PUBSUB_SCAN_TOPIC=$(TOPIC),DB_URL=$(DB_URL),DB_USER=$(DB_USER) \
 	  --set-secrets=DB_PASSWORD=$(DB_SECRET_NAME):latest
 
-deploy-worker: ## Deploy the worker Cloud Run service (calls the private scanner).
+deploy-worker: check-db-user ## Deploy the worker Cloud Run service (calls the private scanner).
 	# The worker resolves SCANNER_URL from the deployed scanner: fail early if it
 	# is missing. Private service (--no-allow-unauthenticated); only the push SA
 	# is later granted run.invoker, by `make pubsub-push`.
@@ -324,6 +336,12 @@ pubsub-push: ## Create/update the authenticated push subscription to the worker.
 	  --role=roles/pubsub.subscriber --project=$(PROJECT_ID)
 
 # ---------------------------------------------------------------------
+# NOTE: `deploy` deliberately does NOT touch IAM -- it assumes infra is already
+# provisioned (`make infra`, which runs `make iam`), done ONCE per project by an
+# owner. The CI deploy SA has no rights to set IAM policy on secrets/buckets, by
+# design. If a fresh project fails deploy-api/deploy-worker with
+#   "Permission denied on secret ... roles/secretmanager.secretAccessor"
+# the runtime SAs are missing the secret binding -> run `make iam PROJECT_ID=...`.
 deploy: ## Build + push + deploy both services + wire the push subscription.
 	$(MAKE) build-push
 	$(MAKE) deploy-api
