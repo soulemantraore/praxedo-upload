@@ -105,6 +105,9 @@ les secrets/variables requis (`GCP_WIF_PROVIDER`, `GCP_DEPLOY_SA`, `GCP_PROJECT_
 Le déploiement du scanner reste manuel tant que son bootstrap GCP (SA + IAM) n'a pas été exécuté
 une fois (`praxedo-upload-scanner/deploy/Makefile`).
 
+> **Document de conception** (choix, hypothèses, pistes d'amélioration + schéma du flux) :
+> [`docs/CONCEPTION.md`](docs/CONCEPTION.md).
+
 ## Choix techniques & hypothèses (transverses)
 
 - **Flux asynchrone** : l'upload répond immédiatement (`PENDING`), le scan tourne en arrière-plan

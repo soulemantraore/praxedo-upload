@@ -344,12 +344,11 @@
     <div class="prose">
       <p class="lead">Le service recoit des fichiers (utilisateurs et systemes tiers), garantit
         qu'ils sont analyses par un antivirus, et n'expose au telechargement que ceux declares
-        <b>sains</b>. Un fichier infecte reste en quarantaine, jamais telechargeable.</p>
-      <p style="margin-top:16px">L'application est structuree en <b>architecture hexagonale</b>
-        (ports &amp; adapters) : un <b>domaine</b> pur (sans dependance a un framework) entoure de
-        <b>ports</b> (interfaces) dont les <b>adapters</b> concrets sont selectionnes par le profil
-        Spring actif. Le meme code metier tourne ainsi 100&nbsp;% en local (sans dependance externe)
-        et en production sur GCP, en ne remplacant que les adapters.</p>
+        <b>sains</b>. Un fichier infecte reste en quarantaine.</p>
+      <p style="margin-top:14px"><b>Architecture hexagonale</b> : un <b>domaine</b> pur entoure de
+        <b>ports</b> dont les <b>adapters</b> sont choisis par le profil Spring actif. Le meme code
+        metier tourne en local sans dependance externe et en production sur GCP &mdash; on ne remplace
+        que les adapters.</p>
     </div>
     <div class="legend">
       <span><i class="sw" style="background:var(--clean)"></i> CLEAN &mdash; valide, telechargeable</span>
@@ -634,67 +633,33 @@
 
       <div class="choice">
         <div class="c-n">04</div>
-        <h3>Analyse asynchrone &amp; auto-declenchee</h3>
-        <p class="c-why">Le port <span class="mono">ScanQueue</span> decouple depot et analyse ; en prod,
-          Pub/Sub + file de rebut (DLQ) + reessais. Le scan demarre sur la notification GCS de fin
-          d'upload. <b>Pourquoi</b> : encaisser les pics et isoler les analyses lentes du chemin de service.</p>
-        <span class="c-tag">Resilience &middot; debit</span>
+        <h3>Analyse asynchrone, scanner externalise</h3>
+        <p class="c-why">Le port <span class="mono">ScanQueue</span> decouple depot et analyse (en prod
+          Pub/Sub + DLQ + reessais). Le scan est delegue a un service antivirus autonome (Python + ClamAV,
+          depot separe) appele en HTTP (OIDC), qui seul lit GCS ; le worker seul ecrit le verdict.
+          <b>Pourquoi</b> : encaisser les pics, isoler les analyses lentes, et cloisonner l'antivirus
+          (aucun acces base, aucun faux &laquo;&nbsp;CLEAN&nbsp;&raquo; usurpable).</p>
+        <span class="c-tag">Resilience &middot; cloisonnement</span>
       </div>
 
       <div class="choice">
         <div class="c-n">05</div>
-        <h3>Scanner externalise, appel synchrone OIDC</h3>
-        <p class="c-why">L'antivirus est un service autonome (depot separe, Python + ClamAV) que le worker
-          <b>appelle</b> en HTTP (OIDC) avec l'URI GCS ; le verdict revient dans la reponse et le worker
-          seul l'ecrit en base. <b>Pourquoi</b> : antivirus reutilisable et cloisonne (aucun acces base),
-          worker allege, et aucune surface entrante usurpable (pas de faux &laquo;&nbsp;CLEAN&nbsp;&raquo;). ADR D15.</p>
-        <span class="c-tag">Cloisonnement &middot; reutilisable</span>
+        <h3>Profils sans dependance externe, domaine POJO</h3>
+        <p class="c-why">local et test tournent en memoire (base et JPA desactives par defaut) ; gcp active
+          les adapters reels. Le domaine n'a aucune annotation JPA &mdash; des entites dediees et Flyway
+          gerent la persistance. <b>Pourquoi</b> : dev et CI rapides et deterministes (sans Docker ni cloud),
+          sans laisser le schema de base dicter le modele metier.</p>
+        <span class="c-tag">Vitesse &middot; purete du modele</span>
       </div>
 
       <div class="choice">
         <div class="c-n">06</div>
-        <h3>Profils : local/test sans dependance externe</h3>
-        <p class="c-why">local et test tournent en memoire (base et JPA desactives par defaut) ; gcp active
-          les adapters reels. <b>Pourquoi</b> : boucle de dev et CI rapides et deterministes, sans Docker
-          ni cloud, tout en gardant un chemin de production fidele.</p>
-        <span class="c-tag">Vitesse &middot; determinisme</span>
-      </div>
-
-      <div class="choice">
-        <div class="c-n">07</div>
-        <h3>Domaine POJO, persistance a part</h3>
-        <p class="c-why">Le domaine n'a aucune annotation JPA ; des entites dediees
-          (<span class="mono">FileEntity</span>, <span class="mono">ApiClientEntity</span>) et Flyway gerent
-          la persistance. <b>Pourquoi</b> : ne pas laisser le schema de base dicter le modele metier.</p>
-        <span class="c-tag">Purete du modele</span>
-      </div>
-
-      <div class="choice">
-        <div class="c-n">08</div>
-        <h3>Tests : vrai conteneur ou mock, a bon escient</h3>
-        <p class="c-why">Testcontainers (vrai PostgreSQL, fake-gcs) et un stub HTTP (MockRestServiceServer)
-          pour le scanner ; le vrai ClamAV est teste cote depot scanner (pytest). Mock la ou l'on delegue
-          a un SDK de confiance (Pub/Sub, signature GCS). <b>Pourquoi</b> : tester le risque reel sans payer
-          des dependances a faible valeur.</p>
-        <span class="c-tag">Strategie de test</span>
-      </div>
-
-      <div class="choice">
-        <div class="c-n">09</div>
-        <h3>Securite par cle API multi-tenant</h3>
-        <p class="c-why">Authentification machine-a-machine par <span class="mono">X-API-Key</span> ; seul le
-          <b>hash SHA-256</b> est stocke, et chaque client ne voit que ses fichiers (isolation par owner).
-          <b>Pourquoi</b> : adapte a l'usage systeme-a-systeme, sans stocker de secret en clair.</p>
-        <span class="c-tag">Securite &middot; multi-tenant</span>
-      </div>
-
-      <div class="choice">
-        <div class="c-n">10</div>
-        <h3>Reconciliation des uploads perimes</h3>
-        <p class="c-why"><span class="mono">ReconciliationService</span> balaye les fichiers restes trop
-          longtemps en attente/analyse (TTL) et les fait expirer. <b>Pourquoi</b> : un depot jamais suivi
-          d'octets, ou un scan perdu, ne doit pas rester bloque indefiniment.</p>
-        <span class="c-tag">Robustesse operationnelle</span>
+        <h3>Cle API multi-tenant &amp; reconciliation</h3>
+        <p class="c-why">Authentification machine-a-machine par <span class="mono">X-API-Key</span> (seul le
+          <b>hash SHA-256</b> est stocke, isolation par owner). <span class="mono">ReconciliationService</span>
+          fait expirer les uploads restes trop longtemps en attente. <b>Pourquoi</b> : usage
+          systeme-a-systeme sans secret en clair, et aucun fichier bloque indefiniment.</p>
+        <span class="c-tag">Securite &middot; robustesse</span>
       </div>
 
     </div>
@@ -717,6 +682,7 @@
           <tr><td><span class="verb get">GET</span> <span class="mono">/api/files/{id}/content</span></td><td>Telechargement <em>si CLEAN</em></td><td>302 vers URL signee, sinon 403</td></tr>
           <tr><td><span class="verb post">POST</span> <span class="mono">/api/files/{id}/rescan</span></td><td>Relance l'analyse</td><td>202 Accepted</td></tr>
           <tr><td><span class="verb post">POST</span> <span class="mono">/api/batches</span></td><td>Enregistrement par lot (systeme-a-systeme)</td><td>Lot de tickets</td></tr>
+          <tr><td><span class="verb get">GET</span> <span class="mono">/api/batches/{id}</span></td><td>Detail d'un lot</td><td><span class="mono">BatchView</span></td></tr>
           <tr><td><span class="verb post">POST</span> <span class="mono">/internal/scan-events</span></td><td>Push Pub/Sub (profil gcp)</td><td>Ack idempotent</td></tr>
         </tbody>
       </table>
