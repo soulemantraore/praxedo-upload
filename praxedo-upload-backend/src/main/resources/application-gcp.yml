@@ -11,6 +11,14 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/praxedo}
     username: ${DB_USER:praxedo}
     password: ${DB_PASSWORD:praxedo}
+    hikari:
+      data-source-properties:
+        # Pooler Supabase en mode transaction (PgBouncer, port 6543) : plusieurs clients
+        # partagent les memes connexions serveur, donc les prepared statements NOMMES cote
+        # serveur (S_1, S_2, ...) entrent en collision -> "prepared statement already exists"
+        # (SQLSTATE 42P05), de facon intermittente. prepareThreshold=0 desactive les prepared
+        # statements cote serveur dans pgjdbc (recommande avec les poolers de connexions).
+        prepareThreshold: 0
   jpa:
     hibernate:
       ddl-auto: none
