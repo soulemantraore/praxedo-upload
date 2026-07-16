@@ -72,6 +72,7 @@ class FilesControllerTest {
         mvc.perform(get("/api/files/" + id).header("X-API-Key", key))
             .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CLEAN"));
         mvc.perform(get("/api/files/" + id + "/content").header("X-API-Key", key))
-            .andExpect(status().is3xxRedirection());
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.url").exists());
     }
 }

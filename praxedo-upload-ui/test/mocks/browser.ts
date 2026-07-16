@@ -24,7 +24,9 @@ export function makeWorker(apiBaseUrl: string) {
       const f = store.getFile(String(params.id));
       if (!f) return new HttpResponse(null, { status: 404 });
       if (f.status !== 'CLEAN') return new HttpResponse(null, { status: 403 });
-      return new HttpResponse(new Blob([`contenu de ${f.filename}`]), { status: 200 });
+      // Comme le vrai backend : renvoie l'URL (ici un blob local) au lieu des octets.
+      const url = URL.createObjectURL(new Blob([`contenu de ${f.filename}`]));
+      return HttpResponse.json({ url });
     }),
     http.put('http://mock.local/upload/:id', ({ params }) =>
       store.markUploaded(String(params.id)) ? new HttpResponse(null, { status: 200 }) : new HttpResponse(null, { status: 404 })),

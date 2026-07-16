@@ -17,6 +17,7 @@ import java.net.URISyntaxException;
 import java.nio.channels.Channels;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -49,10 +50,25 @@ public class GcsFileStorage implements FileStorage {
     }
 
     @Override
-    public URI createDownloadUrl(String storageKey, Duration ttl) {
+    public URI createDownloadUrl(String storageKey, String downloadFilename, Duration ttl) {
         BlobInfo blobInfo = BlobInfo.newBuilder(bucket, storageKey).build();
         Duration effective = ttl != null ? ttl : downloadTtl;
-        return signedUrl(blobInfo, effective, HttpMethod.GET);
+        // response-content-disposition (signe) : GCS renvoie l'objet en piece jointe avec ce nom,
+        // ce qui declenche un vrai telechargement quand le navigateur navigue vers l'URL cross-origin.
+        String disposition = "attachment; filename=\"" + sanitizeFilename(downloadFilename) + "\"";
+        try {
+            return storage.signUrl(blobInfo, effective.toSeconds(), TimeUnit.SECONDS,
+                Storage.SignUrlOption.httpMethod(HttpMethod.GET),
+                Storage.SignUrlOption.withV4Signature(),
+                Storage.SignUrlOption.withQueryParams(Map.of("response-content-disposition", disposition)))
+                .toURI();
+        } catch (URISyntaxException e) {
+            throw new IllegalStateException("URL signee GCS invalide", e);
+        }
+    }
+
+    private static String sanitizeFilename(String name) {
+        return name == null ? "download" : name.replaceAll("[\"\\\\\\r\\n]", "_");
     }
 
     private URI signedUrl(BlobInfo blobInfo, Duration ttl, HttpMethod method) {

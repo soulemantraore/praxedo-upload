@@ -31,6 +31,6 @@ public class FileDownloadService {
         if (!file.isDownloadable()) {
             throw new DownloadNotAllowedException(file.status());
         }
-        return storage.createDownloadUrl(file.storageKey(), properties.downloadUrlTtl());
+        return storage.createDownloadUrl(file.storageKey(), file.filename(), properties.downloadUrlTtl());
     }
 }
