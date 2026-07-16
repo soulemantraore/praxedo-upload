@@ -1,0 +1,2007 @@
+ ▐▛███▜▌   Claude Code v2.1.207
+▝▜█████▛▘  Opus 4.8 · Claude Max
+  ▘▘ ▝▝    ~/Documents/praxedo-app
+
+
+❯ /clear                                                                        
+
+❯ why is this error:  Run service [praxedo-api] in project                      
+  [praxedo-upload-test] region [europe-west1]                                   
+  Deploying new service...                                                      
+  Setting IAM Policy.............................done                           
+  Creating Revision...........................failed                            
+  Deployment failed                                                             
+  ERROR: (gcloud.run.deploy)                                                    
+  spec.template.spec.containers[0].env[7].value_from.secret_key_ref.name:       
+  Permission denied on secret:                                                  
+  projects/900523019258/secrets/praxedo-db-password/versions/latest for         
+  Revision service account                                                      
+  praxedo-api@praxedo-upload-test.iam.gserviceaccount.com. The service account  
+  used must be granted the 'Secret Manager Secret Accessor' role                
+  (roles/secretmanager.secretAccessor) at the secret, project or higher level.  
+  make[1]: *** [Makefile:274: deploy-api] Error 1                               
+  make[1]: Leaving directory '/home/runner/work/praxedo-upload/praxedo-upload/p 
+  raxedo-upload-backend/deploy'                                                 
+  make: *** [Makefile:329: deploy] Error 2                                      
+
+⏺ Bonne question — l'erreur est en fait très explicite, mais regardons le
+  Makefile pour te donner le fix exact au bon endroit.
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+⏺ Voilà, l'erreur est claire et le fix existe déjà dans ton Makefile — il n'a
+  simplement pas été appliqué sur le projet praxedo-upload-test.
+
+  Ce que dit l'erreur
+
+  Chaque révision Cloud Run tourne sous un service account d'exécution : ici
+  praxedo-api@praxedo-upload-test.iam.gserviceaccount.com. Au démarrage, la
+  révision doit lire DB_PASSWORD depuis Secret Manager — c'est ce que fait cette
+  ligne du deploy-api (Makefile:282) :
+
+  --set-secrets=DB_PASSWORD=praxedo-db-password:latest
+
+  C'est le fameux env[7].value_from.secret_key_ref de l'erreur. Comme ce SA n'a
+  pas le rôle roles/secretmanager.secretAccessor sur le secret
+  praxedo-db-password, Cloud Run refuse de créer la révision → Permission denied
+  on secret.
+
+  Pourquoi ça arrive maintenant
+
+  Le binding manquant est déjà prévu dans la cible iam du Makefile (lignes
+  236‑238) :
+
+  gcloud secrets add-iam-policy-binding $(DB_SECRET_NAME) \
+    --member="serviceAccount:$(API_SA)" \
+    --role=roles/secretmanager.secretAccessor --project=$(PROJECT_ID)
+
+  Mais make deploy (Makefile:326) enchaîne seulement build-push → deploy-api → 
+  deploy-worker → pubsub-push. Il ne lance pas iam : iam fait partie du
+  provisioning one‑shot (bootstrap/infra). Sur praxedo-upload-test, cette étape
+  n'a jamais été appliquée (projet neuf, ou secret/SA recréé après le binding).
+  Le CI ne fait que make deploy en supposant l'infra déjà en place.
+
+  Le fix
+
+  Option ciblée (juste ce qui bloque) :
+
+  gcloud secrets add-iam-policy-binding praxedo-db-password \
+    --member="serviceAccount:praxedo-api@praxedo-upload-test.iam.gserviceaccount
+  .com" \
+    --role=roles/secretmanager.secretAccessor \
+    --project=praxedo-upload-test
+
+  Le deploy-worker va buter sur exactement le même mur → fais aussi le worker SA
+  (praxedo-worker@…), ou lance directement la cible complète, idempotente :
+
+  make -C praxedo-upload-backend/deploy iam PROJECT_ID=praxedo-upload-test
+
+  Attends quelques secondes que l'IAM se propage, puis relance le déploiement.
+
+  Point d'attention CI
+
+  Ne mets pas ça dans le workflow CI : le DEPLOY_SA du CI n'a que run.admin / 
+  iam.serviceAccountUser / pubsub.admin / storage.admin (Makefile:343), pas de
+  droit d'écrire la policy d'un secret. C'est une étape de provisioning à faire
+  une fois, avec un compte owner sur le projet test. Le CI doit rester purement
+  make deploy sur une infra déjà provisionnée.
+
+  Tu veux que je fasse la commande maintenant (il faut que tu sois authentifié
+  gcloud en owner sur praxedo-upload-test), ou que j'ajoute une note «
+  provisioning prérequis » dans le README/Makefile pour que ce trou ne se
+  reproduise pas sur un nouveau projet ?
+
+✻ Worked for 1m 18s
+
+※ recap: Ton déploiement Cloud Run sur praxedo-upload-test échoue car le service account praxedo-api n'a pas le rôle secretAccessor sur le secret praxedo-db-password. Prochaine action : lancer le binding IAM manquant avec un compte owner, puis relancer le déploiement.
+
+! gcloud secrets add-iam-policy-binding $(DB_SECRET_NAME) \                     
+    --member="serviceAccount:$(API_SA)" \                                       
+    --role=roles/secretmanager.secretAccessor --project=$(PROJECT_ID)           
+  ⎿  (eval):1: command not found: DB_SECRET_NAME
+     (eval):1: command not found: API_SA
+     (eval):1: command not found: PROJECT_ID
+     … +10 lines (ctrl+o to expand)
+
+⏺ Ça a échoué parce que tu as collé la syntaxe Make ($(VAR)) dans le shell : en
+  zsh, $(...) c'est une substitution de commande, donc il a essayé de lancer
+  DB_SECRET_NAME comme une commande. Il faut les valeurs littérales.
+
+  Colle plutôt ça (valeurs résolues pour le projet test) :
+
+  gcloud secrets add-iam-policy-binding praxedo-db-password \
+    --member="serviceAccount:praxedo-api@praxedo-upload-test.iam.gserviceaccount
+  .com" \
+    --role=roles/secretmanager.secretAccessor \
+    --project=praxedo-upload-test
+
+  Et dans la foulée le worker SA (sinon deploy-worker bute pareil) :
+
+  gcloud secrets add-iam-policy-binding praxedo-db-password \
+    --member="serviceAccount:praxedo-worker@praxedo-upload-test.iam.gserviceacco
+  unt.com" \
+    --role=roles/secretmanager.secretAccessor \
+    --project=praxedo-upload-test
+
+  Si tu préfères laisser Make résoudre les variables lui-même, l'équivalent en
+  une commande c'est :
+
+  make -C praxedo-upload-backend/deploy iam PROJECT_ID=praxedo-upload-test
+
+  (idempotent, et ça pose aussi les bindings bucket / pubsub en même temps).
+
+✻ Churned for 17s
+
+!gcloud secrets add-iam-policy-binding praxedo-db-password \                    
+   --member="serviceAccount:praxedo-api@praxedo-upload-test.iam.gserviceaccount 
+ .com" \                                                                        
+   --role=roles/secretmanager.secretAccessor \                                  
+   --project=praxedo-upload-test                                                
+  ⎿  Updated IAM policy for secret [praxedo-db-password].
+     bindings:
+     - members:
+     … +5 lines (ctrl+o to expand)
+
+⏺ Parfait, le binding API est posé. ✅
+
+  Le SA praxedo-api@… a maintenant roles/secretmanager.secretAccessor sur le
+  secret. Enchaîne avec le worker (même mur sur deploy-worker) :
+
+  gcloud secrets add-iam-policy-binding praxedo-db-password \
+    --member="serviceAccount:praxedo-worker@praxedo-upload-test.iam.gserviceacco
+  unt.com" \
+    --role=roles/secretmanager.secretAccessor \
+    --project=praxedo-upload-test
+
+  Puis relance le déploiement (attends ~10 s que l'IAM se propage, sinon tu peux
+  retomber sur le même Permission denied le temps de la propagation). Dis-moi
+  quand c'est reparti — et pense au fait que ce trou se reproduira sur tout
+  nouveau projet tant que le provisioning one-shot (make iam) n'est pas
+  documenté/appliqué en amont du make deploy.
+
+✻ Cooked for 13s
+
+!gcloud secrets add-iam-policy-binding praxedo-db-password \                    
+   --member="serviceAccount:praxedo-worker@praxedo-upload-test.iam.gserviceacco 
+ unt.com" \                                                                     
+   --role=roles/secretmanager.secretAccessor \                                  
+   --project=praxedo-upload-test                                                
+  ⎿  Updated IAM policy for secret [praxedo-db-password].
+     bindings:
+     - members:
+     … +7 lines (ctrl+o to expand)
+
+⏺ Les deux SA (api + worker) ont maintenant secretAccessor sur le secret. ✅
+
+  Tu peux relancer le déploiement :
+  - Depuis le CI : re-run le workflow GitHub Actions (Re-run failed jobs suffit,
+  l'IAM est côté GCP, pas côté code).
+  - En local : make -C praxedo-upload-backend/deploy deploy 
+  PROJECT_ID=praxedo-upload-test (avec les mêmes vars que le CI : DB_URL,
+  DB_USER, DB_PASSWORD si secrets doit être (re)poussé, etc.).
+
+  Laisse ~10 s de propagation avant, sinon tu peux retomber transitoirement sur
+  le Permission denied.
+
+  Deux points pour que ça ne revienne pas :
+
+  1. Ce projet est déjà à moitié provisionné à la main (SAs + secret existent,
+  mais les bindings IAM manquaient). Le vrai correctif propre serait de lancer
+  make iam PROJECT_ID=praxedo-upload-test une bonne fois — il pose tous les
+  bindings runtime (secret + bucket + pubsub), pas seulement les deux qu'on
+  vient de faire. Sinon tu risques le même genre d'erreur au premier upload
+  (bucket) ou au premier scan (pubsub).
+  2. Je te propose d'ajouter une note « provisioning prérequis » (README deploy
+  + commentaire sur la cible deploy du Makefile) rappelant que make infra/make 
+  iam doit tourner une fois par projet, avec un compte owner, avant tout make 
+  deploy — puisque le DEPLOY_SA du CI n'a volontairement pas les droits d'écrire
+  les policies IAM. Je le fais ?
+
+✻ Churned for 18s
+
+! vasy fais les                                                                 
+  ⎿  (eval):1: command not found: vasy
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+⏺ Mon shell est authentifié (souleman.traore.new@gmail.com, projet
+  praxedo-upload-test) et toute l'infra existe déjà (SAs, bucket praxedo-files,
+  topics scan-requests + -dlq). Je peux donc lancer make iam proprement — il est
+  idempotent et va poser tous les bindings runtime manquants (bucket + pubsub +
+  push SA), pas seulement les deux secrets qu'on a faits à la main.
+
+  Ran 1 shell command (ctrl+o to expand)
+⏺ Le classifier a bloqué make iam côté mon shell : c'est un grant IAM plus large
+  que les deux secretAccessor que tu avais nommés explicitement, donc il
+  demande une validation hors auto-mode. Pas de souci — c'est toi qui vas le 
+  lancer (ton shell est déjà authentifié), et pendant ce temps je fais la doc.
+
+  Lance-le toi-même via le préfixe ! :
+
+  ! make -C praxedo-upload-backend/deploy iam PROJECT_ID=praxedo-upload-test
+
+  Pendant ce temps, je m'occupe de la note « provisioning prérequis ». Je
+  regarde le README deploy :
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+⏺ Le README documente déjà bien le flux (les étapes 1–3 « une fois à la main »,
+  note CI/CD ligne 181‑183), mais il manque le point de dépannage précis pour
+  cette erreur, et le Makefile ne dit nulle part que deploy ne touche
+  volontairement pas l'IAM. J'ajoute les deux. (Au passage, il y a un ```
+  orphelin en toute fin de README que je nettoie.)
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 6 lines
+      323      --role=roles/pubsub.subscriber --project=$(PROJECT_ID)
+      324  
+      325  # ------------------------------------------------------------
+           ---------
+      326 +# NOTE: `deploy` deliberately does NOT touch IAM -- it assumes
+          + infra is already                                             
+      327 +# provisioned (`make infra`, which runs `make iam`), done ONCE
+          + per project by an                                            
+      328 +# owner. The CI deploy SA has no rights to set IAM policy on s
+          +ecrets/buckets, by                                            
+      329 +# design. If a fresh project fails deploy-api/deploy-worker wi
+          +th                                                            
+      330 +#   "Permission denied on secret ... roles/secretmanager.secre
+          +tAccessor"                                                    
+      331 +# the runtime SAs are missing the secret binding -> run `make 
+          +iam PROJECT_ID=...`.                                          
+      332  deploy: ## Build + push + deploy both services + wire the push
+            subscription.
+      333    $(MAKE) build-push
+      334    $(MAKE) deploy-api
+
+⏺ Update(praxedo-upload-backend/deploy/README.md)
+  ⎿  Added 24 lines, removed 1 line
+      181  - **CI/CD** : le workflow suppose l'infra déjà provisionnée (é
+           tapes 1–3 ci-dessus faites une fois à la main) ;
+      182    chaque push `main` ne fait que tester, builder et redéployer
+            (`make deploy`). Secrets/variables requis :
+      183    voir l'en-tête de `../.github/workflows/deploy.yml`.
+      184 -```                                                           
+      184 +                                                              
+      185 +## Dépannage                                                  
+      186 +                                                              
+      187 +- **`Permission denied on secret ... roles/secretmanager.secre
+          +tAccessor` au déploiement** :                                 
+      188 +  les comptes de service d'exécution (`praxedo-api@…`, `praxed
+          +o-worker@…`) n'ont pas le droit de lire                       
+      189 +  le secret `praxedo-db-password`. Ce binding est posé par `ma
+          +ke iam` (inclus dans `make infra`), à lancer                  
+      190 +  **une fois par projet avec un compte owner** — le compte de 
+          +déploiement du CI n'a **volontairement pas**                  
+      191 +  le droit d'écrire la policy IAM d'un secret, donc `make depl
+          +oy` ne le répare pas. Correctif :                             
+      192 +                                                              
+      193 +  ```bash                                                     
+      194 +  # tous les bindings runtime d'un coup (secret + bucket + Pub
+          +/Sub), idempotent                                             
+      195 +  make iam PROJECT_ID=$PROJECT_ID                             
+      196 +                                                              
+      197 +  # …ou ciblé sur le seul secret, pour les deux SA runtime :  
+      198 +  for SA in praxedo-api praxedo-worker; do                    
+      199 +    gcloud secrets add-iam-policy-binding praxedo-db-password 
+          +\                                                             
+      200 +      --member="serviceAccount:$SA@$PROJECT_ID.iam.gserviceacc
+          +ount.com" \                                                   
+      201 +      --role=roles/secretmanager.secretAccessor --project=$PRO
+          +JECT_ID                                                       
+      202 +  done                                                        
+      203 +  ```                                                         
+      204 +                                                              
+      205 +  Comptez ~10 s de propagation IAM avant de relancer `make dep
+          +loy`. Le même trou se manifeste sinon sur                     
+      206 +  le **bucket** (au premier upload) ou **Pub/Sub** (au premier
+          + scan) si `make iam` n'a jamais tourné —                      
+      207 +  d'où l'intérêt de lancer `make iam`/`make infra` en entier p
+          +lutôt que le seul binding du secret.                          
+
+⏺ C'est fait côté doc. Récap :
+
+  Débloqué maintenant (les deux bindings secret, faits à la main) :
+  - praxedo-api@… et praxedo-worker@… ont roles/secretmanager.secretAccessor sur
+  praxedo-db-password → deploy-api et deploy-worker ne buteront plus sur le
+  secret.
+
+  Documenté (pour que le trou ne se reproduise pas sur un nouveau projet) :
+  - deploy/Makefile — commentaire au-dessus de la cible deploy : elle ne touche
+  pas l'IAM par design, et rappel du correctif si Permission denied on secret.
+  - deploy/README.md — nouvelle section Dépannage avec la commande de fix (et
+  nettoyage d'un ``` orphelin en fin de fichier au passage).
+
+  Ce qu'il te reste à faire (je ne peux pas le lancer moi-même — le classifier
+  bloque make iam en auto-mode car c'est un grant IAM plus large que les deux
+  secrets que tu avais nommés) : lance-le toi via !, pour poser aussi les
+  bindings bucket et Pub/Sub (sinon même genre d'erreur au 1er upload / 1er
+  scan) :
+
+  ! make -C praxedo-upload-backend/deploy iam PROJECT_ID=praxedo-upload-test
+
+  Puis relance le déploiement (CI « Re-run failed jobs », ou make -C 
+  praxedo-upload-backend/deploy deploy PROJECT_ID=praxedo-upload-test).
+
+  Les modifs de doc sont dans le working tree (non commitées). Tu veux que je
+  crée une branche task/… + PR pour ces deux fichiers, ou tu préfères les
+  grouper avec un autre changement ?
+
+✻ Churned for 3m 11s
+
+! make -C praxedo-upload-backend/deploy iam PROJECT_ID=praxedo-upload-test      
+  ⎿  # --- api: sign V4 URLs (signBlob on itself), publish scans, object me
+     tadata,
+     #     read the DB secret (Supabase reached over TLS, no Cloud SQL IAM)
+     … +114 lines (ctrl+o to expand)
+
+⏺ make iam est passé nickel — tout le runtime IAM du projet test est maintenant
+  en place :
+
+  ┌────────────────┬─────────────────────────────────────────────────────────┐
+  │       SA       │                       Rôles posés                       │
+  ├────────────────┼─────────────────────────────────────────────────────────┤
+  │                │ serviceAccountTokenCreator (self, pour signer les URLs  │
+  │ praxedo-api    │ V4), storage.objectAdmin (bucket), pubsub.publisher     │
+  │                │ (topic), secretmanager.secretAccessor (secret)          │
+  ├────────────────┼─────────────────────────────────────────────────────────┤
+  │ praxedo-worker │ storage.objectAdmin (bucket),                           │
+  │                │ secretmanager.secretAccessor (secret)                   │
+  ├────────────────┼─────────────────────────────────────────────────────────┤
+  │ agent Pub/Sub  │ serviceAccountTokenCreator (push SA), pubsub.publisher  │
+  │                │ (DLQ)                                                   │
+  └────────────────┴─────────────────────────────────────────────────────────┘
+
+  Plus aucun trou : secret ✅, bucket ✅ (plus d'erreur au 1er upload), Pub/Sub
+  ✅ (plus d'erreur au 1er scan / dead-letter).
+
+  Relance le déploiement — CI « Re-run failed jobs », ou en local :
+  ! make -C praxedo-upload-backend/deploy deploy PROJECT_ID=praxedo-upload-test
+  (en local il te faut aussi DB_URL + DB_USER corrects, et le scanner déployé
+  avant le worker, sinon deploy-worker échoue explicitement sur SCANNER_URL —
+  c'est voulu).
+
+  Dis-moi si le deploy repart. Et pour les deux fichiers de doc modifiés
+  (Makefile + README), tu veux que je crée la branche task/… + PR maintenant ?
+
+✻ Sautéed for 19s
+
+※ recap: Objectif : débloquer le déploiement Cloud Run du projet test. L'IAM est réparé (make iam passé, tous les bindings runtime en place). Prochaine action : relancer le déploiement, puis créer la branche et la PR pour les deux fichiers de doc modifiés.
+
+❯ why is this error now :  --allow-unauthenticated --ingress=all \              
+    --port=8080 --cpu=1 --memory=512Mi \                                        
+    --min-instances=0 --max-instances=10 --timeout=60 \                         
+    --labels=app=praxedo-upload,component=api \                                 
+    --startup-probe=tcpSocket.port=8080,periodSeconds=10,failureThreshold=30 \  
+    --set-env-vars=SPRING_PROFILES_ACTIVE=gcp,SERVER_PORT=8080,GCP_PROJECT_ID=p 
+  raxedo-upload-test,GCS_BUCKET=praxedo-upload-test-praxedo-files,PUBSUB_SCAN_T 
+  OPIC=scan-requests,DB_URL=jdbc:postgresql://aws-0-eu-west-1.pooler.supabase.c 
+  om:6543/postgres?sslmode=require,DB_USER=postgres.tmimrnpsbduweomeewyj \      
+    --set-secrets=DB_PASSWORD=praxedo-db-password:latest                        
+  Deploying container to Cloud Run service [praxedo-api] in project             
+  [praxedo-upload-test] region [europe-west1]                                   
+  Deploying...                                                                  
+  Setting IAM Policy................................done                        
+  Creating Revision............................................................ 
+  ............................................................................. 
+  ........................failed                                                
+  Deployment failed                                                             
+  ERROR: (gcloud.run.deploy) The user-provided container failed to start and    
+  listen on the port defined provided by the PORT=8080 environment variable     
+  within the allocated timeout. This can happen when the container port is      
+  misconfigured or if the timeout is too short. The health check timeout can be 
+  extended. Logs for this revision might contain more information.              
+                                                                                
+  Logs URL: https://console.cloud.google.com/logs/viewer?project=praxedo-upload 
+  -test&resource=cloud_run_revision/service_name/praxedo-api/revision_name/prax 
+  edo-api-00002-xmp&advancedFilter=resource.type%3D%22cloud_run_revision%22%0Ar 
+  esource.labels.service_name%3D%22praxedo-api%22%0Aresource.labels.revision_na 
+  me%3D%22praxedo-api-00002-xmp%22                                              
+  For more troubleshooting guidance, see                                        
+  https://cloud.google.com/run/docs/troubleshooting#container-failed-to-start   
+  make[1]: *** [Makefile:274: deploy-api] Error 1                               
+  make[1]: Leaving directory '/home/runner/work/praxedo-upload/praxedo-upload/p 
+  raxedo-upload-backend/deploy'                                                 
+  make: *** [Makefile:329: deploy] Error 2                                      
+  Error: Process completed with exit code 2.                                    
+
+⏺ Bonne nouvelle : l'IAM est réglé, le déploiement va maintenant beaucoup plus 
+  loin (la révision se crée). Le nouveau blocage est différent : le conteneur
+  démarre mais ne se met pas à écouter sur le port 8080 dans le temps imparti →
+  autrement dit, l'app Spring Boot crashe au démarrage. Le message Cloud Run est
+  générique ; la vraie cause est dans les logs de la révision. Je vais les lire
+  (mon shell est authentifié).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Cette fois ce n'est pas le port ni le timeout (ça, c'est juste le symptôme
+  générique de Cloud Run). Les logs donnent la vraie cause : l'app Spring Boot 
+  crashe au démarrage sur Flyway, puis exit(1) → le conteneur n'écoute jamais
+  sur 8080 → Cloud Run déclare l'échec.
+
+  L'exception exacte :
+
+  org.flywaydb.core.api.FlywayException: Found non-empty schema(s) "public" but
+  no schema history table.
+  Use baseline() or set baselineOnMigrate to true to initialize the schema
+  history table.
+
+  Traduction : la connexion DB marche très bien (Hikari connecté, Postgres 17.6
+  détecté), mais Flyway voit que le schéma public de Supabase contient déjà des 
+  objets alors que la table flyway_schema_history n'existe pas. Par sécurité,
+  Flyway refuse de migrer un schéma non vide qu'il n'a pas lui-même initialisé —
+  il s'arrête, et tout le contexte Spring tombe.
+
+  Le bon correctif dépend de ce qu'il y a réellement dans public. Je regarde la
+  migration V1 et la config Flyway du repo pour te répondre précisément plutôt
+  que deviner.
+
+  Read 2 files, ran 1 shell command (ctrl+o to expand)
+
+⏺ Maintenant j'ai tout le contexte pour trancher :
+
+  - V1 crée api_client et file en create table sans IF NOT EXISTS.
+  - ddl-auto: none → Hibernate ne crée jamais rien ; seul Flyway touche le
+  schéma.
+  - Aucune option baseline-on-migrate configurée.
+
+  Donc le choix du fix dépend d'une seule question : est-ce que public contient 
+  déjà les tables de l'app (file, api_client) ou des objets étrangers/résiduels 
+  ? Si les tables de l'app existent → on adopte l'existant
+  (baseline-on-migrate). Sinon → il faut que V1 tourne vraiment, et un baseline
+  naïf le sauterait (et comme ddl-auto:none, l'app planterait ensuite faute de
+  tables). Je vais donc inspecter la base (lecture seule, DB de test) avant de
+  recommander quoi que ce soit.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+⏺ Pas de psql sur la machine. Avant de te faire ouvrir la console Supabase, je
+  vérifie un point dans l'historique git qui peut lever l'ambiguïté tout seul :
+  est-ce qu'un profil a déjà tourné avec ddl-auto: update/create (ce qui aurait
+  créé file/api_client via Hibernate, sans table d'historique Flyway — ce serait
+  l'explication exacte du blocage).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Ça lève l'ambiguïté :
+
+  - ddl-auto a toujours été none (aucune trace de update/create dans tout
+  l'historique git).
+  - Les profils local/test n'ont pas de base (repos in-memory) → l'app ne s'est
+  jamais connectée à Supabase avec Hibernate.
+
+  Donc Hibernate n'a jamais créé file/api_client, et comme la table d'historique
+  Flyway est absente, V1 n'a jamais tourné (Flyway crée l'historique avant de
+  migrer, et il s'arrête ici avant, au contrôle « schéma vide ? »). Conclusion
+  solide : les tables de l'app ne sont pas dans public — le schéma est non-vide
+  à cause d'objets provisionnés hors Flyway (Supabase pré-remplit public).
+
+  Le fix (confirmé sûr ici)
+
+  On dit à Flyway d'adopter le schéma existant. Comme les tables de l'app
+  n'existent pas, on baseline à la version 0 pour que V1 (1 > 0) s'applique 
+  quand même — le défaut (baseline-version=1) sauterait V1 et l'app planterait
+  ensuite (tables manquantes, ddl-auto:none).
+
+⏺ Update(praxedo-upload-backend/src/main/resources/application-gcp.yml)
+  ⎿  Added 6 lines
+      17      open-in-view: false
+      18    flyway:
+      19      enabled: true
+      20 +    # Le schema "public" de Supabase n'est pas vide (objets pro
+         +visionnes hors Flyway)                                         
+      21 +    # et n'a pas de table d'historique : Flyway s'arrete par se
+         +curite. baseline-on-migrate                                    
+      22 +    # cree l'historique ; baseline-version 0 garantit que V1 (v
+         +1 > 0) s'applique quand meme                                   
+      23 +    # (le defaut baseline a la v1 et SAUTERAIT V1, laissant l'a
+         +pp sans tables car ddl-auto:none).                             
+      24 +    baseline-on-migrate: true                                  
+      25 +    baseline-version: 0                                        
+      26  
+      27  scanner:
+      28    base-url: ${SCANNER_URL}
+
+⏺ C'est édité. Le crash Flyway actuel est réglé par ce changement.
+
+  ⚠️ Le prochain mur probable : le pooler :6543
+
+  Attention, avec ce fix Flyway va maintenant réellement exécuter la migration
+  (créer l'historique + jouer V1). Or ton DB_URL pointe sur :6543 = le 
+  transaction pooler Supabase (PgBouncer) — et c'est exactement ce que ton
+  propre README/Makefile déconseille pour les migrations :
+
+  ▎ :6543 est le transaction pooler ; il ne supporte pas toutes les 
+  ▎ fonctionnalités Flyway. Si les migrations échouent au démarrage, passer 
+  ▎ DB_PORT à 5432 (session pooler).
+
+  Flyway 10 prend un advisory lock de session que le mode transaction de
+  PgBouncer casse → risque de blocage/erreur au migrate. Jusqu'ici Flyway
+  n'avait fait que valider (avant de s'arrêter), donc ce mur n'était pas encore
+  visible.
+
+  Recommandation pour éviter un 2ᵉ aller-retour : déploie la migration via le
+  session pooler en passant DB_PORT=5432. Pour ce déploiement de test, garder le
+  runtime aussi sur :5432 est parfaitement OK.
+
+  À faire maintenant
+
+  En local :
+  ! make -C praxedo-upload-backend/deploy deploy PROJECT_ID=praxedo-upload-test
+  DB_PORT=5432
+  (ou via le CI : ajoute une variable DB_PORT=5432, puis re-run le workflow —
+  pense qu'il rebuild l'image, c'est nécessaire puisque le fix est dans les
+  resources du jar).
+
+  ---
+  Deux choses à décider :
+
+  1. Le port pour le CI : je peux soit changer le défaut DB_PORT du Makefile à
+  5432, soit (plus propre pour la prod) donner à Flyway une URL dédiée :5432
+  tout en gardant le runtime sur :6543. Pour rester YAGNI je pencherais pour
+  DB_PORT=5432 au déploiement, sans toucher le Makefile. Tu préfères quoi ?
+  2. PR : j'ai maintenant 3 fichiers modifiés (doc Makefile+README, et le fix
+  application-gcp.yml). Je crée une branche task/fix-flyway-baseline-supabase +
+  PR avec le tout, ou tu veux séparer le fix de la doc ?
+
+  Redonne-moi la main quand le deploy repart (ou colle-moi la prochaine erreur).
+
+✻ Sautéed for 7m 1s
+!  make -C praxedo-upload-backend/deploy deploy PROJECT_ID=praxedo-upload-test  
+  DB_PORT=5432                                                                  
+  ⎿  make: *** praxedo-upload-backend/deploy: No such file or directory.  S
+     top.
+
+⏺ Ton shell ! n'est pas à la racine du repo (le chemin relatif ne résout pas).
+  Utilise le chemin absolu :
+
+  ! make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy
+  deploy PROJECT_ID=praxedo-upload-test DB_PORT=5432
+
+✻ Sautéed for 15s
+
+!  make -C                                                                      
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy     
+  deploy PROJECT_ID=praxedo-upload-test DB_PORT=5432                            
+  ⎿  Command running in background with ID: biyojov47. Output is being writ
+     ten to: /private/tmp/claude-501/-Users-soulemantraore-Documents-praxed
+     o-app/1396a300-341d-4425-aa10-2400513d3555/tasks/biyojov47.output. You
+     … +2 lines (ctrl+o to expand)
+
+⏺ Background command " make -C
+/Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy deploy
+PROJECT_ID=praxedo-upload-test DB_PORT=5432" failed with exit code 2
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Le build a réussi (image poussée), et le :5432 a bien été pris en compte. Mais
+  deploy-api échoue encore sur « failed to listen on 8080 » — révision
+  praxedo-api-00003-n74. Il y a un détail suspect dans la commande générée :
+  DB_USER=postgres (tout court) et GCS_BUCKET=praxedo-files. Or le pooler 
+  Supabase exige postgres.<ref> comme identifiant — pas postgres seul. C'est
+  probablement une nouvelle cause (échec de connexion DB), pas Flyway. Je lis
+  les logs de la nouvelle révision pour confirmer.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Confirmé — nouvelle cause, sans rapport avec Flyway (Flyway n'a même pas
+  obtenu de connexion cette fois) :
+
+  FATAL: (ENOIDENTIFIER) no tenant identifier provided (external_id or
+  sni_hostname required)
+
+  C'est le pooler Supabase (Supavisor) qui refuse la connexion parce que
+  DB_USER=postgres (tout court) ne contient pas l'identifiant de tenant. Sur le
+  pooler Supabase — aussi bien :5432 que :6543 — l'utilisateur doit être
+  postgres.<project-ref>, ici postgres.tmimrnpsbduweomeewyj.
+
+  Pourquoi ça arrive maintenant : le défaut du Makefile est DB_USER ?= postgres
+  (générique). Le CI passe la bonne valeur (postgres.tmimrnpsbduweomeewyj) via
+  une variable GitHub ; ton run local est retombé sur le défaut → mauvais user.
+  (À la révision 00002 précédente, la connexion passait justement parce que le
+  CI avait mis le bon user.)
+
+  À relancer
+
+  L'image latest contient déjà le fix baseline (le build de ce run a packagé
+  l'application-gcp.yml modifié). Inutile de rebuild : relance juste deploy-api
+  avec le bon user — ça ira ~2,5 min plus vite et ça exercera enfin Flyway :
+
+  ! make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy
+  deploy-api PROJECT_ID=praxedo-upload-test DB_PORT=5432
+  DB_USER=postgres.tmimrnpsbduweomeewyj
+
+  Cette fois Flyway va vraiment se connecter puis migrer — on validera d'un coup
+  (a) le fix baseline-on-migrate et (b) que le session pooler :5432 tient la
+  migration.
+
+  Footgun à corriger ensuite
+
+  Le défaut DB_USER=postgres du Makefile est un piège avec le pooler Supabase.
+  Je te propose un garde-fou dans deploy-api/deploy-worker : échouer tôt avec un
+  message clair si DB_HOST contient pooler.supabase et que DB_USER n'a pas de
+  suffixe .<ref>. Je l'ajoute (avec la doc) une fois le déploiement vert ?
+  Dis-moi quand deploy-api répond.
+
+✻ Worked for 2m 14s
+
+!  make -C                                                                      
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy     
+  deploy-api PROJECT_ID=praxedo-upload-test DB_PORT=5432                        
+  DB_USER=postgres.tmimrnpsbduweomeewyj                                         
+  ⎿  # --allow-unauthenticated makes the endpoint public (grants allUsers t
+     he
+     # run.invoker role); the app still enforces the X-API-Key header itsel
+     … +23 lines (ctrl+o to expand)
+
+⏺ 🎉 Déployé et vert ! Révision praxedo-api-00004-qnq, 100 % du trafic.
+  Service URL : https://praxedo-api-900523019258.europe-west1.run.app
+
+  Le fait que Cloud Run route le trafic = la sonde TCP 8080 a répondu = l'app a 
+  démarré, donc Flyway a bien migré cette fois (sinon exit(1) comme avant). Je
+  confirme quand même côté logs que la migration a réussi, et je teste que le
+  service répond :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Vérifié de bout en bout — tout est bon :
+
+  Logs Flyway (révision 00004) — exactement le comportement visé par le fix :
+  Schema history table "public"."flyway_schema_history" does not exist yet
+  Creating Schema History table ... with baseline
+  Successfully baselined schema with version: 0
+  Migrating schema "public" to version "1 - schema"
+  Successfully applied 1 migration ... now at version v1
+  Tomcat started on port 8080
+  Started UploadBackendApplication in 16.026 seconds
+  → le baseline-version: 0 était bien la clé : baseline à 0 puis V1 appliquée
+  (les tables file/api_client sont créées). Et le session pooler :5432 a tenu la
+  migration sans souci.
+
+  HTTP : /api/files sans clé → 401 ✅ C'est le meilleur signal possible : l'app
+  tourne et le filtre X-API-Key rejette bien l'anonyme. (/actuator/health et /
+  en 404 = normal, pas d'actuator ni de route racine exposés.)
+
+  ---
+  Récap des 3 causes (toutes réglées)
+
+  #: 1
+  Symptôme: Permission denied on secret
+  Cause racine: SAs runtime sans secretmanager.secretAccessor
+  Fix: make iam (bindings secret + bucket + Pub/Sub)
+  ────────────────────────────────────────
+  #: 2
+  Symptôme: container failed to listen → Found non-empty schema ... no history 
+  table
+  Cause racine: public Supabase non-vide, Flyway refuse
+  Fix: baseline-on-migrate: true + baseline-version: 0 dans application-gcp.yml
+  ────────────────────────────────────────
+  #: 3
+  Symptôme: container failed to listen → ENOIDENTIFIER no tenant identifier
+  Cause racine: DB_USER=postgres (défaut Makefile) sans ref tenant
+  Fix: déploiement avec DB_USER=postgres.tmimrnpsbduweomeewyj
+
+  Ce qui reste
+
+  1. Terminer le déploiement : là on n'a fait que deploy-api. Il manque
+  deploy-worker (⚠️ exige que le scanner soit déployé d'abord, sinon échec
+  explicite sur SCANNER_URL) + pubsub-push. Tu veux enchaîner ? (dis-moi si le
+  scanner est déjà déployé sur le projet test).
+  2. Le CI va-t-il passer ? Il a déjà le bon DB_USER. Deux réserves :
+    - Il utilise :6543 (défaut). Comme la migration est maintenant déjà 
+  appliquée (schéma en v1), Flyway ne fera plus de DDL → un simple re-run
+  pourrait passer. S'il bloque sur le lock Flyway, il faudra mettre DB_PORT=5432
+  côté CI.
+    - Sa variable GCS_BUCKET vaut praxedo-upload-test-praxedo-files, mais le
+  bucket réel s'appelle praxedo-files → les uploads casseraient à l'exécution. À
+  corriger dans les variables GitHub.
+  3. Les 3 fichiers modifiés (Makefile + README doc, application-gcp.yml fix) →
+  PR. J'ajoute au passage le garde-fou DB_USER proposé (échec clair si pooler
+  Supabase sans suffixe .<ref>) pour tuer le footgun #3 ?
+
+  Dis-moi par quoi on continue — je pencherais pour : PR (avec garde-fou) 
+  maintenant, puis on règle les variables CI, puis worker+scanner. Et si tu
+  veux, je capture ces 3 pièges dans .claude/memory/ pour ne pas les reperdre.
+
+✻ Cogitated for 2m 24s
+
+❯ corrige aussi deploy-worker, puis faire un commit push sur une nouvelle       
+  branch avec PR                                                                
+
+⏺ Bien reçu. Plan : je corrige la même classe de bug côté deploy-worker (il
+  passe les mêmes variables DB → même footgun DB_USER), via un garde-fou partagé
+  qui protège deploy-api et deploy-worker, puis je commit sur une branche
+  dédiée et j'ouvre la PR.
+
+  D'abord je relis les zones exactes du Makefile à éditer, et l'état git courant
+  (le snapshot initial montrait un HEAD détaché — à vérifier avant de brancher)
+  :
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+⏺ Infos clés : la branche courante est task/deploy-gcloud-run (pas un HEAD
+  détaché), et develop n'existe pas (ni local ni distant) — seul main existe.
+  Avant de brancher, je vérifie la topologie pour ne pas créer une PR polluée
+  par des commits non liés :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Topologie claire et propre :
+  - La branche courante n'a aucun commit d'avance sur origin/main → tout le
+  tooling deploy est déjà dans main ; mes edits sont des deltas propres.
+  - develop n'existe pas → la PR ira vers main (je m'écarte du CLAUDE.md sur ce
+  point, faute de branche develop).
+  - Aucune PR ouverte sur la branche courante, gh dispo.
+
+  Je fais d'abord la correction deploy-worker : un garde-fou partagé 
+  check-db-user (prérequis de deploy-api et deploy-worker) qui échoue tôt et
+  clairement sur le footgun #3, au lieu du cryptique « failed to start ».
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 1 line, removed 1 line
+       99  .DEFAULT_GOAL := help
+      100  
+      101  .PHONY: help enable-apis bootstrap service-accounts secrets sq
+           l bucket pubsub iam \
+      102 -        infra build-push deploy-api deploy-worker \           
+      102 +        infra build-push check-db-user deploy-api deploy-worke
+          +r \                                                           
+      103          pubsub-push deploy config cicd-setup cicd-values cicd-
+           github
+      104  
+      105  # ------------------------------------------------------------
+           ---------
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 13 lines
+      262    #   docker push $(IMAGE_URI)
+      263  
+      264  # ------------------------------------------------------------
+           ---------
+      265 +# Guard (prereq of both deploys): the Supabase pooler (aws-*.p
+          +ooler.supabase.com)                                           
+      266 +# routes tenants by the "postgres.<project-ref>" username. A b
+          +are DB_USER (no                                               
+      267 +# ".<ref>" suffix) is rejected at connect time with           
+      268 +#   FATAL: (ENOIDENTIFIER) no tenant identifier provided      
+      269 +# which only surfaces as a Cloud Run "container failed to star
+          +t". Fail fast here.                                           
+      270 +check-db-user:                                                
+      271 +  @if echo "$(DB_HOST)" | grep -q 'pooler\.supabase' && ! echo
+          + "$(DB_USER)" | grep -q '\.'; then \                          
+      272 +    echo "ERROR: DB_HOST=$(DB_HOST) is the Supabase pooler, bu
+          +t DB_USER=$(DB_USER) has no tenant suffix."; \                
+      273 +    echo "       Pass DB_USER=postgres.<project-ref>, e.g. mak
+          +e deploy DB_USER=postgres.abcdefgh...";  \                    
+      274 +    exit 1; \                                                 
+      275 +  fi                                                          
+      276 +                                                              
+      277 +# ------------------------------------------------------------
+          +---------                                                     
+      278  # Both services are single-container (DB reached over TLS, no 
+           sidecar), so they
+      279  # deploy imperatively with `gcloud run deploy` -- no Knative Y
+           AML to render.
+      280  # The env values carry no commas, so the default comma-delimit
+           ed --set-env-vars
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 1 line, removed 1 line
+      280  # The env values carry no commas, so the default comma-delimit
+           ed --set-env-vars
+      281  # is safe. Cloud Run adds a default TCP startup probe on --por
+           t; we keep an
+      282  # explicit one to preserve the generous 300s startup window (S
+           pring Boot boot).
+      283 -deploy-api: ## Deploy the api Cloud Run service (public, X-API
+          --Key enforced in-app).                                        
+      283 +deploy-api: check-db-user ## Deploy the api Cloud Run service 
+          +(public, X-API-Key enforced in-app).                          
+      284    # --allow-unauthenticated makes the endpoint public (grants 
+           allUsers the
+      285    # run.invoker role); the app still enforces the X-API-Key he
+           ader itself.
+      286    gcloud run deploy $(API_SERVICE) \
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 1 line, removed 1 line
+      294      --set-env-vars=SPRING_PROFILES_ACTIVE=gcp,SERVER_PORT=8080
+           ,GCP_PROJECT_ID=$(PROJECT_ID),GCS_BUCKET=$(BUCKET),PUBSUB_SCAN
+           _TOPIC=$(TOPIC),DB_URL=$(DB_URL),DB_USER=$(DB_USER) \
+      295      --set-secrets=DB_PASSWORD=$(DB_SECRET_NAME):latest
+      296  
+      297 -deploy-worker: ## Deploy the worker Cloud Run service (calls t
+          -he private scanner).                                          
+      297 +deploy-worker: check-db-user ## Deploy the worker Cloud Run se
+          +rvice (calls the private scanner).                            
+      298    # The worker resolves SCANNER_URL from the deployed scanner:
+            fail early if it
+      299    # is missing. Private service (--no-allow-unauthenticated); 
+           only the push SA
+      300    # is later granted run.invoker, by `make pubsub-push`.
+
+⏺ Je vérifie que le garde-fou fonctionne (syntaxe Makefile + logique) — sans
+  rien déployer, juste la cible check-db-user :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Garde-fou validé (échoue sur postgres nu + pooler, passe avec le suffixe
+  tenant, ne se déclenche pas hors pooler). Je complète le Dépannage du README
+  avec les deux autres pièges (ENOIDENTIFIER + baseline Flyway) :
+
+⏺ Update(praxedo-upload-backend/deploy/README.md)
+  ⎿  Added 13 lines
+      205    Comptez ~10 s de propagation IAM avant de relancer `make dep
+           loy`. Le même trou se manifeste sinon sur
+      206    le **bucket** (au premier upload) ou **Pub/Sub** (au premier
+            scan) si `make iam` n'a jamais tourné —
+      207    d'où l'intérêt de lancer `make iam`/`make infra` en entier p
+           lutôt que le seul binding du secret.
+      208 +                                                              
+      209 +- **`FATAL: (ENOIDENTIFIER) no tenant identifier provided`** (
+          +le conteneur « failed to start ») : le                        
+      210 +  **pooler Supabase** (`aws-*.pooler.supabase.com`, ports `:54
+          +32` **et** `:6543`) route les tenants par le                  
+      211 +  nom d'utilisateur `postgres.<project-ref>`. Un `DB_USER=post
+          +gres` nu est rejeté. Passer                                   
+      212 +  `DB_USER=postgres.<project-ref>` (visible dans le dashboard 
+          +Supabase → *Connect*). Le garde-fou                           
+      213 +  `check-db-user` (prérequis de `deploy-api`/`deploy-worker`) 
+          +échoue désormais tôt et clairement dans ce cas.               
+      214 +                                                              
+      215 +- **`Found non-empty schema(s) "public" but no schema history 
+          +table`** (Flyway, « failed to start ») :                      
+      216 +  Supabase pré-remplit le schéma `public`, que Flyway refuse d
+          +e migrer sans table d'historique. L'app active                
+      217 +  donc `spring.flyway.baseline-on-migrate=true` + `baseline-ve
+          +rsion=0` (profil `gcp`) : Flyway crée                         
+      218 +  l'historique, baseline à la version 0, puis applique V1. **P
+          +our la 1ʳᵉ migration**, préférer le                           
+      219 +  **session pooler** (`DB_PORT=5432`) : le transaction pooler 
+          +`:6543` ne supporte pas les locks de session                  
+      220 +  de Flyway.                                                  
+
+⏺ Garde-fou en place et README complété. Maintenant la branche + commit + push +
+  PR. Je prépare les messages dans des fichiers (commit en ASCII/anglais pour
+  coller au repo et au validateur ; corps de PR en français) :
+
+  Made 2 scratchpad edits +62 (ctrl+o to expand)
+
+⏺ Branche + staging (uniquement les 3 fichiers, pas les changements non liés du
+  working tree) + commit :
+
+  Committed 77a3cf5 (ctrl+o to expand)
+
+⏺ Commit propre (3 fichiers, 65 insertions). Push + création de la PR vers main
+  :
+
+  Pushed to task/fix-gcp-deploy-supabase-flyway, created PR #12 (ctrl+o to expand)
+
+⏺ ✅ Terminé. PR ouverte :
+  https://github.com/soulemantraore/praxedo-upload/pull/12 (base main).
+
+  Ce qui a été livré
+
+  Correction deploy-worker — concrètement, le worker passait les mêmes variables
+  DB que l'api, donc le même footgun. Plutôt que dupliquer, j'ai ajouté un
+  garde-fou partagé check-db-user, mis en prérequis de deploy-api ET 
+  deploy-worker : il échoue tôt avec un message clair si DB_HOST est le pooler
+  Supabase et que DB_USER n'a pas le suffixe .<ref> (au lieu du cryptique «
+  container failed to start »). Testé : échoue sur postgres nu, passe avec
+  postgres.<ref>, inactif hors pooler.
+
+  Commit 77a3cf5 — 3 fichiers seulement (rien des changements non liés du
+  working tree) :
+  - application-gcp.yml — baseline-on-migrate: true + baseline-version: 0
+  - deploy/Makefile — garde-fou check-db-user + commentaires
+  - deploy/README.md — section Dépannage (les 3 erreurs) + note provisioning
+
+  Bon à savoir
+
+  - Tu es maintenant sur la branche task/fix-gcp-deploy-supabase-flyway (les
+  autres fichiers modifiés/non suivis du working tree sont restés non commités,
+  intacts).
+  - La PR ne couvre pas deux points côté variables CI (hors repo, signalés dans
+  le corps de la PR) : DB_PORT=5432 pour la migration, et GCS_BUCKET du CI
+  (praxedo-upload-test-praxedo-files) qui ne correspond pas au bucket réel
+  praxedo-files.
+  - deploy-worker reste non déployé : il exige le scanner déployé d'abord (repo
+  praxedo-upload-scanner). Dis-moi si tu veux qu'on l'enchaîne.
+
+  Tu veux que je capture ces 3 pièges dans .claude/memory/ (comme prévu par ton
+  CLAUDE.md), et/ou qu'on attaque le déploiement scanner → worker ?
+
+✻ Worked for 5m 59s
+
+❯ mais le  deploy-worker n'est-ce pas just un endpoint du backend ?             
+
+⏺ Excellente question — et la réponse est « oui et non », ça vaut le coup d'être
+  précis. Laisse-moi vérifier deux-trois choses dans le code plutôt que te
+  répondre de mémoire.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Zsh a tenté d'expandre *.java. Je requote :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Voilà qui clarifie. Je lis la config de sécurité pour être exact sur un point
+  important (est-ce que /internal est ouvert sur l'api publique ?) :
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Vérifié — maintenant je peux répondre précisément. Ta réponse est « oui au 
+  niveau du code, non au niveau du déploiement ».
+
+  Au niveau du code : oui, c'est juste un endpoint
+
+  Le worker n'est pas un service/codebase séparé. /internal/scan-events est un
+  simple @RestController du backend (ScanEventsController), et les deux services
+  Cloud Run tournent la même image, le même jar, le même profil gcp — il n'y a
+  aucune notion de « rôle » api/worker dans le code (pas de variable ROLE,
+  rien). Concrètement, praxedo-api et praxedo-worker exposent tous les deux 
+  l'app complète (tous les controllers).
+
+  Au niveau du déploiement : deux services, volontairement
+
+  On déploie la même image deux fois avec des configs Cloud Run différentes,
+  pour 3 raisons :
+
+  ┌─────────┬────────────────────────────┬──────────────────────────────────┐
+  │         │            api             │              worker              │
+  ├─────────┼────────────────────────────┼──────────────────────────────────┤
+  │         │ public                     │ privé                            │
+  │ Ingress │ (--allow-unauthenticated)  │ (--no-allow-unauthenticated,     │
+  │         │                            │ OIDC push SA)                    │
+  ├─────────┼────────────────────────────┼──────────────────────────────────┤
+  │ Sizing  │ 512Mi, timeout=60          │ 1Gi, timeout=600 (scans lents)   │
+  ├─────────┼────────────────────────────┼──────────────────────────────────┤
+  │ Scaling │ max=10 (trafic user)       │ max=5 (isolé des users)          │
+  └─────────┴────────────────────────────┴──────────────────────────────────┘
+
+  1. Sécurité/réseau — c'est le point clé : /internal/scan-events n'a aucune 
+  auth applicative (SecurityConfig ligne 25 : anyRequest().permitAll()). Il est
+  censé être protégé uniquement par le jeton OIDC de la souscription Pub/Sub 
+  push, ce qui n'a de sens que sur un service privé. D'où le worker séparé.
+  2. Sizing — le scan tolère 10 min et veut plus de RAM ; l'api veut répondre
+  vite.
+  3. Isolation de charge — une rafale de scans ne doit pas affamer les instances
+  qui servent les utilisateurs.
+
+  Le hic que ça révèle ⚠️
+
+  Comme c'est la même image, le service api public expose lui aussi 
+  /internal/scan-events en permitAll(). Aujourd'hui, n'importe qui peut donc
+  POST https://praxedo-api.../internal/scan-events. L'impact est borné (il faut
+  connaître des fileId/gsUri valides, au pire on déclenche des rescans), mais
+  c'est une vraie faille latente. À durcir : soit gater /internal/** 
+  applicativement (secret partagé ou vérif du jeton OIDC dans l'app), soit ne
+  router Pub/Sub que vers le worker et bloquer /internal sur l'api.
+
+  Pourrais-tu fusionner en un seul service ?
+
+  Techniquement oui (l'api expose déjà l'endpoint → tu pointerais la push
+  subscription dessus). Mais tu perdrais les 3 bénéfices ci-dessus, et surtout
+  tu rendrais l'endpoint de scan public. Pour tes contraintes (beaucoup
+  d'utilisateurs, gros fichiers, « aucun fichier servi sans scan »), le design 2
+  services / 1 image est justifié — ce n'est pas de la redondance.
+
+  Conséquence pratique pour ton déploiement : le worker reste bien un
+  déploiement séparé (deploy-worker), et il a besoin du scanner d'abord. Rien à
+  changer, sauf si tu veux que je traite la faille /internal (petit durcissement
+  dans SecurityConfig + éventuellement un WORKER/api split de rôle). Tu veux
+  que je l'ajoute à la PR, ou qu'on le garde pour une tâche à part ?
+
+✻ Worked for 2m 15s
+
+❯ deploy le scanner$                                                            
+⏺ On déploie le scanner. C'est le composant praxedo-upload-scanner/ (FastAPI +
+  ClamAV), avec son propre deploy/. Avant de lancer quoi que ce soit, j'inspecte
+  son outillage pour connaître ce que fait make all, ses prérequis et ses
+  pièges (notamment l'étape IAM, qui côté backend nécessitait un compte owner).
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+⏺ J'ai lu le Makefile du scanner. make all enchaîne scanner-sa → build-push → 
+  deploy → iam. Un piège va casser l'étape iam si on ne le corrige pas :
+
+  Mismatch de bucket. Le Makefile scanner a BUCKET ?= 
+  $(PROJECT_ID)-praxedo-files → praxedo-upload-test-praxedo-files, qui n'existe 
+  pas. Le vrai bucket est praxedo-files (celui que le backend utilise et sur
+  lequel on a posé l'IAM tout à l'heure). Sans override, build-push + deploy
+  passeraient, mais make iam échouerait sur le binding bucket — et comme le
+  binding run.invoker du worker vient après dans la même recette, le worker 
+  n'obtiendrait jamais le droit d'appeler le scanner. C'est le même mismatch que
+  j'avais signalé côté variable CI.
+
+  → Il faut passer BUCKET=praxedo-files.
+
+  Commande à lancer (via !)
+
+  Comme make all inclut l'étape iam (grant IAM → bloqué pour moi en auto-mode,
+  comme le make iam backend), lance-le toi :
+
+  ! make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-scanner/deploy all
+  PROJECT_ID=praxedo-upload-test BUCKET=praxedo-files
+
+  ⏳ Compte quelques minutes : Cloud Build de l'image scanner (~2-3 min) puis
+  démarrage du service avec le sidecar ClamAV qui charge sa base de signatures
+  (la sonde tolère jusqu'à ~600 s). C'est normal que le deploy soit long.
+
+  ⚠️ À anticiper pour l'étape d'après (worker → scanner)
+
+  Le scanner est déployé en --ingress=internal. Or un appel Cloud Run → Cloud
+  Run via l'URL *.run.app est considéré externe par défaut → le worker risque un
+  403 à moins d'un egress VPC. Ce n'est pas bloquant pour déployer le scanner
+  maintenant, mais on devra le vérifier quand on wire le worker (soit egress VPC
+  sur le worker, soit ajuster l'ingress). On verra ça après.
+
+  Lance la commande et colle-moi le résultat — je vérifierai ensuite les logs +
+  make url (le SCANNER_URL à donner au worker). Et je te propose de corriger le 
+  défaut BUCKET du scanner Makefile (praxedo-files) dans une petite PR de suivi
+  pour tuer ce mismatch.
+
+✻ Worked for 2m 7s
+
+※ recap: Objectif : déployer le micro-service sur GCP (projet test). L'API backend tourne déjà ; il reste à déployer le scanner. Prochaine action : lancer la commande `make all` du scanner avec `BUCKET=praxedo-files` via le préfixe `!`.
+
+! make -C                                                                       
+ /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-scanner/deploy all  
+ PROJECT_ID=praxedo-upload-test BUCKET=praxedo-files                            
+  ⎿  /Applications/Xcode.app/Contents/Developer/usr/bin/make scanner-sa
+     /Applications/Xcode.app/Contents/Developer/usr/bin/make build-push
+     docker build -t europe-west1-docker.pkg.dev/praxedo-upload-test/praxed
+     … +299 lines (ctrl+o to expand)
+
+⏺ Deux infos importantes dans cette sortie :
+
+  1. Le build s'est fait en local via docker build sur ton Mac ARM (Apple 
+  Silicon) — pas via Cloud Build. Résultat : une image arm64.
+  2. Le deploy a échoué là-dessus :
+  Cloud Run does not support image '...praxedo-upload-scanner:latest':
+  Container manifest type 'application/vnd.oci.image.index.v1+json' must support
+  amd64/linux.
+
+  C'est le classique mauvaise architecture : Cloud Run exige amd64/linux, ton
+  docker build local a produit de l'arm64. Le backend, lui, était passé par
+  gcloud builds submit (Cloud Build = amd64 natif), d'où l'absence du problème.
+
+  Bizarrerie : le Makefile que j'avais lu utilisait gcloud builds submit pour
+  build-push, mais la sortie montre docker build/docker push. Je relis le
+  fichier réel pour trancher le fix :
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Le vrai Makefile scanner (relu) confirme le problème — son build-push fait un
+  docker build local :
+
+  build-push: ## Build the image with Docker and push to Artifact Registry.
+        docker build -t $(IMAGE_URI) $(REPO_ROOT)
+        docker push $(IMAGE_URI)
+
+  Sur ton Mac Apple Silicon, ça produit une image arm64, que Cloud Run refuse
+  (il lui faut amd64/linux). Le backend, lui, passe par Cloud Build (gcloud 
+  builds submit) qui build en amd64 natif — d'où l'absence du souci. Le Makefile
+  scanner est donc incohérent avec le backend.
+
+  Root cause : docker build local (arm64) au lieu de Cloud Build (amd64).
+
+  Je corrige le scanner pour l'aligner sur le backend (Cloud Build, pas de
+  Docker local requis), et j'en profite pour corriger le défaut BUCKET (le
+  mismatch praxedo-upload-test-praxedo-files qui aurait cassé le iam) :
+
+⏺ Update(praxedo-upload-scanner/deploy/Makefile)
+  ⎿  Added 8 lines, removed 6 lines
+      77      || gcloud iam service-accounts create $(SCANNER_SA_NAME) \
+      78           --display-name="praxedo scanner runtime" --project=$(P
+          ROJECT_ID)
+      79  
+      80 -build-push: ## Build the image with Docker and push to Artifact
+         - Registry.                                                     
+      81 -  docker build -t $(IMAGE_URI) $(REPO_ROOT)                    
+      82 -  docker push $(IMAGE_URI)                                     
+      83 -  # Docker must be authenticated to $(REGION)-docker.pkg.dev fi
+         -rst.                                                           
+      84 -  # CI logs in via docker/login-action (WIF access token); loca
+         -lly, run once:                                                 
+      85 -  #   gcloud auth configure-docker $(REGION)-docker.pkg.dev    
+      80 +build-push: ## Build the image with Cloud Build and push to Art
+         +ifact Registry.                                                
+      81 +  # Cloud Build builds on amd64/linux (the arch Cloud Run requi
+         +res). A local                                                  
+      82 +  # `docker build` on Apple Silicon yields an arm64 image that 
+         +Cloud Run rejects                                              
+      83 +  # ("manifest ... must support amd64/linux"), so build on Clou
+         +d Build like the                                               
+      84 +  # backend does. No local Docker required.                    
+      85 +  gcloud builds submit $(REPO_ROOT) --tag=$(IMAGE_URI) --projec
+         +t=$(PROJECT_ID)                                                
+      86 +  # Local alternative on Apple Silicon (needs buildx):         
+      87 +  #   docker buildx build --platform linux/amd64 -t $(IMAGE_URI
+         +) --push $(REPO_ROOT)                                          
+      88  
+      89  # Two containers (app + ClamAV sidecar), so deploy imperatively
+           with the
+      90  # multi-container `gcloud run deploy --container ...` syntax. S
+          ervice-level flags
+
+⏺ Update(praxedo-upload-scanner/deploy/Makefile)
+  ⎿  Added 2 lines, removed 2 lines
+      36  WORKER_SA_NAME   ?= praxedo-worker
+      37  WORKER_SA        := $(WORKER_SA_NAME)@$(PROJECT_ID).iam.gservic
+          eaccount.com
+      38  
+      39 -# ---- GCS bucket the scanner reads from (same default as the b
+         -ackend Makefile) ----                                          
+      40 -BUCKET           ?= $(PROJECT_ID)-praxedo-files                
+      39 +# ---- GCS bucket the scanner reads from (must match the backen
+         +d Makefile's BUCKET) ----                                      
+      40 +BUCKET           ?= praxedo-files                              
+      41  
+      42  # ---- Sidecar image ----
+      43  CLAMAV_IMAGE     ?= clamav/clamav-debian:latest
+
+⏺ Fixé. Je vérifie en dry-run que build-push appelle bien Cloud Build
+  maintenant, et que BUCKET est résolu correctement :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Les deux corrections sont validées :
+  - BUCKET = praxedo-files ✅ (fini le mismatch)
+  - build-push → gcloud builds submit (Cloud Build = amd64) ✅
+
+  Relance make all (plus besoin de passer BUCKET, le défaut est corrigé) :
+
+  ! make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-scanner/deploy all
+  PROJECT_ID=praxedo-upload-test
+
+  Ce qui va se passer : scanner-sa (idempotent, déjà créé) → build-push via 
+  Cloud Build (rebuild en amd64, ~2-3 min, écrase l'image arm64) → deploy (⏳
+  potentiellement long : le sidecar ClamAV charge sa base de signatures, la
+  sonde tolère ~600 s) → iam (bucket objectViewer + run.invoker au worker).
+
+  Colle-moi le résultat — je vérifierai ensuite les logs du scanner + make url
+  (le SCANNER_URL à donner au worker au moment du deploy-worker).
+
+  Une fois le scanner vert, il restera : deploy-worker (avec le SCANNER_URL) +
+  pubsub-push, et on regardera le point ingress=internal que j'avais signalé
+  (risque de 403 worker→scanner). On avance étape par étape.
+
+✻ Crunched for 3m 0s
+
+❯ non, je ne veux pas de gcloud builds                                          
+
+⏺ Compris — on garde le build local Docker, pas de Cloud Build. Le problème
+  n'est pas Docker en soi, c'est que sur Apple Silicon un docker build produit
+  de l'arm64. La solution locale : docker buildx --platform linux/amd64
+  (cross-build amd64 via QEMU, que Docker Desktop a déjà), avec --push direct
+  vers Artifact Registry.
+
+  Je remplace mon edit précédent par la version buildx :
+
+⏺ Update(praxedo-upload-scanner/deploy/Makefile)
+  ⎿  Added 10 lines, removed 8 lines
+      77      || gcloud iam service-accounts create $(SCANNER_SA_NAME) \
+      78           --display-name="praxedo scanner runtime" --project=$(P
+          ROJECT_ID)
+      79  
+      80 -build-push: ## Build the image with Cloud Build and push to Art
+         -ifact Registry.                                                
+      81 -  # Cloud Build builds on amd64/linux (the arch Cloud Run requi
+         -res). A local                                                  
+      82 -  # `docker build` on Apple Silicon yields an arm64 image that 
+         -Cloud Run rejects                                              
+      83 -  # ("manifest ... must support amd64/linux"), so build on Clou
+         -d Build like the                                               
+      84 -  # backend does. No local Docker required.                    
+      85 -  gcloud builds submit $(REPO_ROOT) --tag=$(IMAGE_URI) --projec
+         -t=$(PROJECT_ID)                                                
+      86 -  # Local alternative on Apple Silicon (needs buildx):         
+      87 -  #   docker buildx build --platform linux/amd64 -t $(IMAGE_URI
+         -) --push $(REPO_ROOT)                                          
+      80 +build-push: ## Build the linux/amd64 image with Docker buildx a
+         +nd push to Artifact Registry.                                  
+      81 +  # Cloud Run requires linux/amd64. On Apple Silicon a plain `d
+         +ocker build`                                                   
+      82 +  # produces arm64, which Cloud Run rejects ("manifest ... must
+         + support                                                       
+      83 +  # amd64/linux"). buildx cross-builds amd64 (via QEMU) and pus
+         +hes straight to                                                
+      84 +  # the registry; --provenance=false keeps a single image manif
+         +est (no                                                        
+      85 +  # attestation index, which Cloud Run also rejects).          
+      86 +  docker buildx build --platform linux/amd64 --provenance=false
+         + \                                                             
+      87 +    -t $(IMAGE_URI) --push $(REPO_ROOT)                        
+      88 +  # Docker must be authenticated to $(REGION)-docker.pkg.dev fi
+         +rst, once:                                                     
+      89 +  #   gcloud auth configure-docker $(REGION)-docker.pkg.dev    
+      90  
+      91  # Two containers (app + ClamAV sidecar), so deploy imperatively
+           with the
+      92  # multi-container `gcloud run deploy --container ...` syntax. S
+          ervice-level flags
+
+⏺ Je vérifie le dry-run :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Confirmé : docker buildx build --platform linux/amd64 --provenance=false ... 
+  --push (build amd64 en local, aucun Cloud Build).
+
+  Relance :
+
+  ! make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-scanner/deploy all
+  PROJECT_ID=praxedo-upload-test
+
+  Notes :
+  - Le cross-build amd64 passe par QEMU (émulation) → le pip install sera un peu
+  plus lent que ton build arm64 natif, compte quelques minutes. C'est normal.
+  - Docker est déjà authentifié au registry (ton docker push d'avant a marché),
+  donc rien à refaire.
+  - Ensuite deploy (ClamAV, potentiellement long) puis iam.
+
+  Colle-moi le résultat — je vérifie les logs + make url derrière.
+
+✻ Churned for 1m 7s
+
+! make -C                                                                       
+ /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-scanner/deploy all  
+ PROJECT_ID=praxedo-upload-test                                                 
+  ⎿  /Applications/Xcode.app/Contents/Developer/usr/bin/make scanner-sa
+     /Applications/Xcode.app/Contents/Developer/usr/bin/make build-push
+     # Cloud Run requires linux/amd64. On Apple Silicon a plain `docker bui
+     … +319 lines (ctrl+o to expand)
+⏺ 🎉 Scanner déployé ! Le build amd64 via buildx est passé (manifest unique
+  sha256:a73a…, pas d'index d'attestation), et tout make all a réussi :
+
+  - build-push buildx --platform linux/amd64 → poussé ✅
+  - deploy → révision praxedo-scanner-00003-kl4, 100 % du trafic ✅
+  URL : https://praxedo-scanner-900523019258.europe-west1.run.app
+  - iam → objectViewer bucket pour le scanner + run.invoker du worker sur le
+  scanner ✅
+
+  Le fait que Cloud Run route le trafic = la sonde /health a répondu ET (via
+  --depends-on=clamav) le probe TCP de clamd est passé → ClamAV a chargé ses
+  signatures. Je confirme via les logs (le service est privé+internal,
+  impossible de le curler directement) :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Confirmé sain :
+  - ClamAV : clamd 1.5.3 (ARCH: x86_64) → bien amd64, databases chargées
+  (daily.cvd v28059, 355 490 signatures, tests passés).
+  - Le deploy a routé 100 % du trafic → les deux sondes sont passées : /health
+  de l'app ET le probe TCP 3310 de clamd (grâce à --depends-on=clamav). Les
+  lignes « Socket for clamd not found yet, retrying » sont le freshclam qui
+  attend clamd au boot — transitoire, sans conséquence.
+
+  SCANNER_URL = https://praxedo-scanner-900523019258.europe-west1.run.app (le
+  worker le résoudra tout seul via gcloud run services describe).
+
+  Étape suivante : deploy-worker
+
+  Le worker démarre indépendamment du scanner (il ne l'appelle qu'au moment d'un
+  scan), donc il va se déployer sans souci — avec les mêmes fixes DB qu'à l'api
+  :
+
+  ! make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy
+  deploy-worker PROJECT_ID=praxedo-upload-test DB_PORT=5432
+  DB_USER=postgres.tmimrnpsbduweomeewyj
+
+  (Il réutilise l'image backend latest déjà buildée — pas de rebuild. Le
+  garde-fou check-db-user qu'on a ajouté validera le DB_USER.)
+
+  ⚠️ Le mur qui arrivera au 1er scan (pas au deploy)
+
+  Le scanner est en --ingress=internal. Quand le worker l'appellera via l'URL
+  *.run.app, le trafic Cloud Run→Cloud Run est classé externe par défaut → 403
+  côté scanner, malgré le run.invoker (l'ingress filtre au niveau réseau, avant
+  l'auth). Ça ne bloquera ni deploy-worker ni pubsub-push, seulement le scan
+  réel. Options quand on y sera :
+  - Direct VPC egress sur le worker (route la sortie par le VPC → trafic «
+  interne ») — le plus propre, garde l'ingress internal ;
+  - ou passer le scanner en --ingress=all (l'IAM run.invoker + OIDC protègent
+  quand même l'endpoint).
+
+  Lance deploy-worker et colle-moi le résultat. Ensuite pubsub-push, puis on
+  traitera l'ingress avant de tester un upload de bout en bout. (Petit rappel :
+  le Makefile scanner que je viens de corriger — buildx amd64 + défaut BUCKET —
+  est non commité ; on le mettra dans une PR quand le pipeline sera vert.)
+
+✻ Brewed for 2m 5s
+
+❯ donne moi les cmd pour les faires                                             
+
+⏺ Voici les 3 commandes, dans l'ordre, à lancer chacune via ! (colle-moi le
+  résultat de deploy-worker avant d'enchaîner, au cas où) :
+
+  1) Déployer le worker (privé, mêmes fixes DB que l'api) :
+  ! make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy
+  deploy-worker PROJECT_ID=praxedo-upload-test DB_PORT=5432
+  DB_USER=postgres.tmimrnpsbduweomeewyj
+
+  2) Câbler la souscription push Pub/Sub → worker (résout l'URL du worker
+  automatiquement) :
+  ! make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy
+  pubsub-push PROJECT_ID=praxedo-upload-test
+
+  3) Débloquer l'appel worker → scanner (l'ingress=internal casserait l'appel
+  Cloud Run→Cloud Run ; on repasse en all — le scanner reste privé, protégé par
+  run.invoker + OIDC, seul le worker SA peut l'appeler) :
+  ! gcloud run services update praxedo-scanner --region=europe-west1
+  --project=praxedo-upload-test --ingress=all
+
+  Ordre logique : 1 → 2 → 3. Après ça, le pipeline est câblé de bout en bout
+  (upload → notification GCS → Pub/Sub → worker → scanner → verdict en base).
+
+  Notes :
+  - deploy-worker réutilise l'image backend latest (pas de rebuild) ; le worker
+  démarre, Flyway voit le schéma déjà en v1 → rien à migrer.
+  - pubsub-push suppose que la notification GCS OBJECT_FINALIZE → topic a été
+  configurée (via make infra/bucket). Si l'auto-trigger à l'upload ne marche pas
+  ensuite, c'est là qu'il faudra regarder — on vérifiera au test e2e.
+  - Une fois vert, je te prépare une commande de test de bout en bout (créer une
+  clé API + upload d'un fichier) et on committe les fixes scanner dans une PR.
+
+✻ Brewed for 59s
+
+! make -C                                                                       
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy     
+  deploy-worker PROJECT_ID=praxedo-upload-test DB_PORT=5432                     
+  DB_USER=postgres.tmimrnpsbduweomeewyj                                         
+  ⎿  # The worker resolves SCANNER_URL from the deployed scanner: fail earl
+     y if it
+     # is missing. Private service (--no-allow-unauthenticated); only the p
+     … +14 lines (ctrl+o to expand)
+
+⏺ ✅ Worker déployé : révision praxedo-worker-00001-k5s, 100 % du trafic. URL :
+  https://praxedo-worker-900523019258.europe-west1.run.app
+
+  Le trafic est routé → l'app a démarré (Flyway a trouvé le schéma en v1, rien à
+  migrer, Tomcat écoute). Je confirme vite fait côté logs pendant que tu
+  enchaînes :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Worker sain, confirmé côté DB :
+  - Successfully validated 2 migrations (le baseline v0 + V1 dans l'historique)
+  - Current version of schema "public": 1 → up to date. No migration necessary.
+  ✅
+  - Tomcat started on port 8080 → Started UploadBackendApplication in 13.5s ✅
+
+  Le worker se connecte bien au session pooler :5432, trouve le schéma déjà
+  migré, démarre proprement.
+
+  Enchaîne avec les étapes 2 puis 3 :
+
+  2) Souscription push Pub/Sub → worker :
+  ! make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy
+  pubsub-push PROJECT_ID=praxedo-upload-test
+
+  3) Débloquer worker → scanner (ingress) :
+  ! gcloud run services update praxedo-scanner --region=europe-west1
+  --project=praxedo-upload-test --ingress=all
+
+  Colle-moi le résultat de pubsub-push (c'est là qu'on verra si la souscription
+  se crée bien et si le worker URL est résolu).
+
+✻ Worked for 1m 5s
+
+! make -C                                                                       
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy     
+  pubsub-push PROJECT_ID=praxedo-upload-test                                    
+  ⎿  # Only the push SA may invoke the (otherwise private) worker.
+     gcloud run services add-iam-policy-binding praxedo-worker \
+          --region=europe-west1 \
+     … +34 lines (ctrl+o to expand)
+
+⏺ ✅ Pub/Sub câblé :
+  - run.invoker accordé au push SA sur le worker (seul lui peut invoquer le
+  worker privé) ✅
+  - Souscription scan-worker-sub créée → push vers …/internal/scan-events, auth
+  OIDC = push SA, DLQ scan-requests-dlq après 5 tentatives ✅
+  - Agent Pub/Sub → pubsub.subscriber sur la souscription (dead-letter) ✅
+
+  Le pipeline Pub/Sub → worker est en place. Il ne reste que l'étape 3 pour
+  débloquer worker → scanner :
+
+  ! gcloud run services update praxedo-scanner --region=europe-west1
+  --project=praxedo-upload-test --ingress=all
+
+  Lance-la et colle-moi le résultat — après ça, tout est câblé et on pourra
+  tester un upload de bout en bout.
+
+✻ Baked for 17s
+
+! make -C                                                                       
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy     
+  pubsub-push PROJECT_ID=praxedo-upload-test                                    
+  ⎿  # Only the push SA may invoke the (otherwise private) worker.
+     gcloud run services add-iam-policy-binding praxedo-worker \
+          --region=europe-west1 \
+     … +36 lines (ctrl+o to expand)
+
+⏺ Pas d'inquiétude — ces ERROR sont bénins et attendus. Tu as relancé l'étape 2,
+  or la souscription existait déjà (créée au run précédent). Le Makefile
+  utilise exprès le pattern create || update : le create échoue (« already
+  exists »), puis le update prend le relais et réussit (Updated subscription).
+  Les bindings IAM sont idempotents. Bilan : le target s'est terminé OK, rien de
+  cassé.
+
+  Il te reste juste l'étape 3 (pas encore lancée) — débloquer worker → scanner :
+
+  ! gcloud run services update praxedo-scanner --region=europe-west1
+  --project=praxedo-upload-test --ingress=all
+
+  C'est la dernière commande de câblage. Après, tout est en place et on teste un
+  upload de bout en bout.
+
+✻ Worked for 19s
+
+! gcloud run services update praxedo-scanner --region=europe-west1              
+  --project=praxedo-upload-test --ingress=all                                   
+  ⎿  Updating...
+     Done.
+     Service [praxedo-scanner] has been updated.
+
+⏺ ✅ Étape 3 faite — le scanner est en ingress=all (toujours privé, run.invoker
+  + OIDC comme seul gardien). Tout le pipeline est câblé.
+
+  Je fais un état des lieux read-only (les 3 services + la notification GCS, qui
+  conditionne l'auto-scan à l'upload) pour te donner un récap fiable et savoir
+  ce qu'il manque pour tester :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ État des lieux — presque tout est là, sauf un maillon :
+
+  - 4 services Cloud Run déployés : praxedo-api, praxedo-worker,
+  praxedo-scanner, praxedo-ui (l'UI est déjà là aussi). ✅
+  - Souscription push → worker /internal/scan-events + DLQ ✅
+  - ⚠️ La notification GCS OBJECT_FINALIZE → topic est VIDE → l'auto-scan à 
+  l'upload ne se déclenche pas. Un fichier uploadé ne partirait jamais au scan
+  (il resterait en statut pending). Le chemin de rescan manuel (l'api publie sur
+  le topic) marcherait, lui.
+
+  C'est l'étape bucket de make infra qui pose cette notification, et elle n'a
+  pas tourné (ou visait le mauvais bucket). Je regarde le target exact pour te
+  donner la commande :
+  Read 1 file (ctrl+o to expand)
+
+⏺ Voilà le maillon manquant identifié. Le target pubsub du backend fait deux
+  choses qui manquent : (1) autoriser l'agent de service GCS à publier sur le
+  topic, et (2) créer la notification OBJECT_FINALIZE. Les topics existent déjà,
+  donc c'est idempotent.
+
+  Dernière commande de câblage
+
+  ! make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy
+  pubsub PROJECT_ID=praxedo-upload-test
+
+  (Le défaut BUCKET=praxedo-files est correct. Ça pose le binding GCS-agent →
+  topic + la notification ; le guard list|grep évite les doublons.)
+
+  Récap — architecture déployée sur praxedo-upload-test
+
+  ┌─────────────────────┬────────────────────┬─────────────────────────────┐
+  │      Composant      │        État        │            Accès            │
+  ├─────────────────────┼────────────────────┼─────────────────────────────┤
+  │ api                 │ ✅ révision live   │ public, X-API-Key in-app    │
+  ├─────────────────────┼────────────────────┼─────────────────────────────┤
+  │ worker              │ ✅ live, Flyway v1 │ privé, invocable par le     │
+  │                     │  OK                │ push SA                     │
+  ├─────────────────────┼────────────────────┼─────────────────────────────┤
+  │ scanner             │ ✅ live, ClamAV    │ privé (run.invoker worker), │
+  │                     │ 355k sigs          │  ingress=all                │
+  ├─────────────────────┼────────────────────┼─────────────────────────────┤
+  │ ui                  │ ✅ déployé         │ public                      │
+  ├─────────────────────┼────────────────────┼─────────────────────────────┤
+  │ Pub/Sub             │ ✅ push → worker + │                             │
+  │ scan-worker-sub     │  DLQ               │                             │
+  ├─────────────────────┼────────────────────┼─────────────────────────────┤
+  │ Notification GCS    │ ⏳ la commande     │                             │
+  │                     │ ci-dessus          │                             │
+  └─────────────────────┴────────────────────┴─────────────────────────────┘
+
+  Après ce make pubsub, le flux auto est complet : upload → GCS finalize → 
+  notification → Pub/Sub → worker → scanner → verdict en base.
+
+  Ensuite
+
+  1. Test e2e : il faudra une clé API valide — la table api_clients n'est pas
+  seedée en profil gcp (seulement en local/test). Je regarde comment en injecter
+  une (endpoint d'admin ou insertion directe) et je te prépare la commande
+  d'upload de test.
+  2. Commit : le Makefile scanner corrigé (buildx amd64 + défaut BUCKET) est non
+  commité → PR de suivi.
+
+  Lance make pubsub et dis-moi ; ensuite je te prépare le test de bout en bout.
+
+✻ Brewed for 1m 41s
+
+!  make -C                                                                      
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy     
+  pubsub PROJECT_ID=praxedo-upload-test                                         
+  ⎿  # Allow the GCS service agent to publish object-finalize notifications
+     .
+     gcloud pubsub topics add-iam-policy-binding scan-requests \
+     … +10 lines (ctrl+o to expand)
+
+⏺ Nouveau piège, classique et bénin : l'agent de service Cloud Storage n'existe
+  pas encore.
+
+  INVALID_ARGUMENT: Service account
+  service-900523019258@gs-project-accounts.iam.gserviceaccount.com does not
+  exist.
+
+  Cet agent (service-<num>@gs-project-accounts…) est créé à la demande par GCP,
+  à la première opération qui en a besoin. Comme aucune notification GCS n'avait
+  jamais été posée sur ce projet, il n'existe pas → le binding échoue.
+
+  Le fix : forcer sa création en interrogeant l'endpoint service-agent de GCS,
+  puis relancer make pubsub. Une seule commande enchaînée :
+
+  ! gcloud storage service-agent --project=praxedo-upload-test && make -C
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy
+  pubsub PROJECT_ID=praxedo-upload-test
+
+  gcloud storage service-agent récupère l'agent et le crée s'il manque (effet de
+  bord de l'appel), ensuite make pubsub pose le binding GCS-agent → topic + la
+  notification. Colle-moi le résultat.
+
+✻ Cogitated for 40s
+
+!  gcloud storage service-agent --project=praxedo-upload-test && make -C        
+  /Users/soulemantraore/Documents/praxedo-app/praxedo-upload-backend/deploy     
+  pubsub PROJECT_ID=praxedo-upload-test                                         
+  ⎿  service-900523019258@gs-project-accounts.iam.gserviceaccount.com
+     # Allow the GCS service agent to publish object-finalize notifications
+     .
+     … +21 lines (ctrl+o to expand)
+
+⏺ ✅ Notification GCS créée (OBJECT_FINALIZE → topic scan-requests,
+  notificationConfig id 5), et l'agent GCS a bien pubsub.publisher sur le topic.
+  Le WARNING: Topic already exists est bénin (guard idempotent).
+
+  🎉 Pipeline complet et câblé de bout en bout
+
+  Client → api (URL signée) → PUT → GCS bucket praxedo-files
+                                          │ OBJECT_FINALIZE (notif ✅)
+                                          ▼
+                               Pub/Sub topic scan-requests
+                                          │ push OIDC (sub ✅)
+                                          ▼
+                          worker /internal/scan-events
+                                          │ HTTP OIDC (run.invoker ✅)
+                                          ▼
+                       scanner (ClamAV) ── lit GCS (objectViewer ✅)
+                                          │ verdict
+                                          ▼
+                                worker → écrit en base (Supabase v1 ✅)
+
+  Tout est déployé sur praxedo-upload-test. Il ne reste plus rien à câbler.
+
+  Pour préparer le test e2e, je regarde comment injecter une clé API (la table
+  api_clients n'est pas seedée en gcp) :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ La déploiement est 100 % terminé et câblé. Pour le test e2e, le mécanisme de
+  clé est clair :
+
+  - Hash stocké = Base64(SHA-256(rawKey)) (base64 standard), clé en clair au
+  format pk_….
+  - Aucun endpoint d'admin en profil gcp : createClient() n'est appelé que par
+  le seed du profil local. Donc pour tester, il faut insérer une ligne 
+  api_client directement (Supabase SQL editor), avec le hash d'une clé qu'on
+  choisit.
+
+  Je prépare ça concrètement : je calcule le hash d'une clé de test et je lis le
+  FilesController pour te donner la séquence curl exacte.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Clé de test prête :
+  - clé en clair : pk_e2e_test_key_praxedo
+  - hash à stocker : kwycTVAW+1huctTET18WV1VyZaquizrslUQptsnlxCQ=
+
+  Je lis la forme exacte de POST /api/files (corps de requête + réponse) pour te
+  donner une séquence curl complète :
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ POST /api/files prend {filename, contentType, size} et renvoie
+  UploadRegistration. Je lis la forme de UploadRegistration (URL signée +
+  méthode/headers) pour finaliser le curl :
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ UploadRegistration = {id, status, uploadUrl, uploadExpiresAt} ; requête =
+  {filename, contentType, size}. J'ai tout pour le test. Je vérifie deux détails
+  (jq dispo ? valeurs de l'enum FileStatus pour le polling) :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Tout est prêt (jq dispo ✅ ; statuts PENDING → SCANNING → CLEAN|INFECTED).
+  J'écris un script de test e2e qui utilise le fichier de test EICAR (le
+  standard antivirus) — il doit ressortir INFECTED, ce qui prouve toute la
+  chaîne scanner.
+
+  Made 1 scratchpad edit +45 (ctrl+o to expand)
+
+⏺ Le déploiement est terminé. Voici le test de bout en bout, en 2 temps.
+
+  A) Créer la clé API de test (Supabase SQL editor)
+
+  Pas de psql sur la machine → passe par le SQL editor du dashboard Supabase et
+  exécute :
+
+  insert into api_client (id, name, api_key_hash, active, created_at)
+  values (gen_random_uuid(), 'e2e-test',
+          'kwycTVAW+1huctTET18WV1VyZaquizrslUQptsnlxCQ=', true, now());
+
+  (C'est le hash base64(sha256) de la clé en clair pk_e2e_test_key_praxedo — le
+  même algo que ApiKeyService.)
+
+  B) Lancer le test
+
+  Une fois la ligne insérée :
+
+  ! bash /private/tmp/claude-501/-Users-soulemantraore-Documents-praxedo-app/233
+  5dc6b-fc8f-4ef5-b71a-dff4621f3206/scratchpad/e2e-test.sh
+
+  Le script : POST /api/files (→ URL signée) → PUT du fichier EICAR sur GCS →
+  poll du statut. Attendu : PENDING → SCANNING → INFECTED (Eicar-Test-Signature)
+  — ça valide toute la chaîne : signature V4, notification GCS, Pub/Sub,
+  worker, appel OIDC au scanner, ClamAV, écriture du verdict en base.
+
+  Si tu veux tester aussi le chemin clean, on relancera avec un fichier anodin
+  (doit finir CLEAN et devenir téléchargeable).
+
+  ---
+  Quand tu auras le résultat, il restera 2 items (hors déploiement) :
+  1. Commit des fixes scanner (buildx amd64 + défaut BUCKET) — PR de suivi.
+  2. Une vraie limite notée au passage : aucun moyen de créer une clé API en 
+  prod (createClient() n'existe qu'au seed local). Pour un livrable, un petit
+  endpoint d'admin (ou une commande) serait à prévoir — je peux te le proposer
+  en spec.
+
+  Dis-moi ce que donne le test.
+
+✻ Cooked for 3m 58s
+
+! bash /private/tmp/claude-501/-Users-soulemantraore-Documents-praxedo-app/2335 
+ dc6b-fc8f-4ef5-b71a-dff4621f3206/scratchpad/e2e-test.sh                        
+  ⎿  == EICAR test file:
+     /var/folders/jv/pnjq2f2x6bx4fhbwhc6sctwc0000gn/T/eicar.bg1KdX6Rus.txt (68
+     bytes)
+     == register: {"id":"f14d95a9-8919-45c9-9bc1-c8565abcfcd7","status":"PENDING
+     ","uploadUrl":"https://storage.googleapis.com/praxedo-files/8b90f75c-e6d0-4
+     7be-9ede-224ec3dac7e8/f14d95a9-8919-45c9-9bc1-c8565abcfcd7/eicar.txt?X-Goog
+     -Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=praxedo-api%40praxedo-upload-
+     test.iam.gserviceaccount.com%2F20260715%2Fauto%2Fstorage%2Fgoog4_request&X-
+     Goog-Date=20260715T011735Z&X-Goog-Expires=900&X-Goog-SignedHeaders=host&X-G
+     oog-Signature=b97499827e632db1727bdc968a958e98197acf049e2f2ad66cb7db1d1acc5
+     c4a3b774d34c9948b2e8b0fda9d3df5e9b7285c86063d1516431268b66ea10ee8b3b14f8317
+     f1eba37f44513210f2202edce48093a60eb47c252183a795d5a79ec4702e2bf18ea30dc387a
+     d1813316aec18703bbd818dd5c8a98ecdfb5a4424b510e49b3285851bd3877ac39f40aeb9cf
+     2cf6efe1715bf32c1ea5945879f99ca6fbc14729eb4d40e26411b906de46edc924a32ef788a
+     3ee627cd5bf9c5d3d3dba6c5a24e68741d4fdc3867bc2e67f48f2d89335b623162015be32c0
+     3f5ac1c39166536e18031a49d4bcf639209ce930f34f734afd8f6b7ce2c8645e939df6a590f
+     7","uploadExpiresAt":"2026-07-15T01:32:35.656222059Z"}
+     == PUT bytes to the signed URL
+        PUT http=200
+     == polling (expect PENDING -> SCANNING -> INFECTED)
+        [1] status=INFECTED threat=Eicar-Test-Signature
+     == PASS: scanner flagged the EICAR file (Eicar-Test-Signature)
+     == file id: f14d95a9-8919-45c9-9bc1-c8565abcfcd7
+
+⏺ 🎉🎉 PASS — pipeline validé de bout en bout, du premier coup !
+
+  register  → PENDING  (URL signée V4 par le SA praxedo-api)
+  PUT       → http 200 (upload GCS)
+  poll [1]  → status=INFECTED  threat=Eicar-Test-Signature   ✅
+
+  En ~3 secondes, toute la chaîne a fonctionné : signature V4 → upload GCS →
+  notification OBJECT_FINALIZE → Pub/Sub → push OIDC → worker → appel OIDC au
+  scanner (run.invoker + ingress=all) → lecture GCS + ClamAV détecte EICAR →
+  verdict écrit en base → l'api le relit. Tout l'IAM et tout le câblage sont
+  bons.
+
+  Je vérifie l'invariant de sécurité (un fichier INFECTED ne doit pas être
+  téléchargeable) et je regarde l'état git pour committer proprement les fixes
+  scanner :
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Les deux confirmations finales sont excellentes :
+
+  - Invariant de sécurité validé : GET /api/files/{id}/content sur le fichier
+  INFECTED → 403 (pas de redirection 302). Un fichier infecté n'est jamais servi
+  — c'est exactement l'exigence cœur du projet (« aucun fichier servi sans
+  avoir été scanné », et un fichier vérolé reste inaccessible). ✅
+
+  Le micro-service est déployé, câblé et prouvé fonctionnel de bout en bout sur
+  GCP. 🎉
+
+  État git / suite
+
+  Tu es maintenant sur la branche task/doc-conception (travail de doc,
+  visiblement), et le fix scanner (praxedo-upload-scanner/deploy/Makefile —
+  buildx amd64 + défaut BUCKET) est encore non commité. Comme c'est un composant
+  à part et que tu es sur une branche de doc, je ne veux pas polluer ton
+  contexte : je te propose de créer une branche dédiée depuis main pour ce fix.
+
+  Comment tu veux que je procède ?
+
+⏺ User answered Claude's questions:
+  ⎿  · Le fix scanner (buildx amd64 + defaut BUCKET) est non commite. Comment on
+     le gere ? → Branche dediee + PR maintenant
+     · Le CI (push sur main) utilise encore DB_PORT=6543 et un GCS_BUCKET 
+     errone. On traite ce trou CI maintenant ? → Oui, corriger le CI
+     · Veux-tu que je capture les pieges de ce deploiement en memoire projet 
+     (.claude/memory/) ? → Oui, capturer
+
+⏺ Parfait, on fait les trois. Je commence par rassembler ce qu'il me faut (sans
+  rien modifier encore) : vérifier que basculer de branche pour le fix scanner
+  est sûr, lire le workflow CI + ses variables, et regarder la structure mémoire
+  existante.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Excellentes nouvelles déjà :
+  - Le diff scanner Makefile HEAD vs origin/main est vide → basculer de branche
+  est safe.
+  - GCS_BUCKET est déjà corrigé dans les variables GitHub (praxedo-files, mis à
+  jour aujourd'hui) — ce trou-là est déjà bouché.
+  - DB_USER = postgres.tmimrnpsbduweomeewyj ✅. Pas de variable DB_PORT → le CI
+  prend le défaut 6543.
+  - Mémoire : il y a déjà un infra.md (mis à jour aujourd'hui) — c'est là que
+  les pièges iront.
+
+  Je lis les workflows CI + infra.md + l'état git complet pour agir juste :
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+⏺ État git : le seul fichier traqué modifié est bien
+  praxedo-upload-scanner/deploy/Makefile (les D docs/superpowers/* et untracked
+  sont ton travail en cours, je n'y touche pas). Et le backend CI passe déjà
+  BUCKET + DB_USER corrects, sans DB_PORT (défaut 6543).
+
+  Je lis le workflow scanner (pour vérifier que mon buildx --push ne casse pas
+  le CI) et infra.md (à enrichir) :
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Le workflow scanner logue bien au registre (docker/login-action) et le runner
+  est amd64 → mon buildx --platform linux/amd64 --push marchera aussi bien en CI
+  qu'en local. Compatible.
+
+  Je prépare les messages du commit/PR scanner et je lis infra.md pour
+  l'enrichir :
+
+  Made 2 scratchpad edits +43 (ctrl+o to expand)
+
+⏺ Maintenant j'isole proprement le fix scanner sur une branche depuis main
+  (stash du seul fichier → branche → commit), sans perturber ta branche
+  task/doc-conception :
+
+  Committed 5ab1884 (ctrl+o to expand)
+
+⏺ Commit 5ab1884 propre (1 fichier). Push + PR vers main, puis je te remets sur
+  task/doc-conception :
+
+  Pushed to task/fix-scanner-deploy-amd64, created PR #14 (ctrl+o to expand)
+
+⏺ ✅ PR scanner créée : https://github.com/soulemantraore/praxedo-upload/pull/14
+  (vers main), et tu es de retour sur task/doc-conception (working tree
+  restauré).
+
+  Maintenant la mémoire. Je lis infra.md pour l'enrichir sans l'écraser :
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ infra.md est riche et bien tenu — et il documente déjà votre choix
+  d'abandonner Cloud Build (ligne 50), ce qui confirme que mon fix buildx
+  (local, pas de gcloud builds) est aligné. Je mets à jour le statut + j'ajoute
+  une section « pièges réels » datée, sans écraser l'existant :
+
+⏺ Update(.claude/memory/infra.md)
+  ⎿  Added 1 line, removed 1 line
+      1  # Infra — outillage de déploiement GCP (PR #26 `task/infra-tooli
+         ng`, backend)
+      2  
+      3 -Outillage gcloud + Makefile uniquement — **pas de Terraform** (d
+        -écision D11). **Exécuté sur le projet `praxedo-upload-test`** (2
+        -026-07-15) : le service **UI est déployé et en ligne** (`https:/
+        -/praxedo-ui-7nj4c3y7jq-ew.a.run.app`) via `ui-deploy.yml`. Backe
+        -nd/scanner : infra partielle (SA runtime + WIF créés ; bucket/pu
+        -bsub/secrets/DB restant à vérifier avant leur premier déploiemen
+        -t réussi). Voir la section **CI/CD — auth WIF** ci-dessous pour 
+        -l'identité de déploiement.                                      
+      3 +Outillage gcloud + Makefile uniquement — **pas de Terraform** (d
+        +écision D11). **✅ Déploiement complet réussi et validé bout-en-
+        +bout sur `praxedo-upload-test` (2026-07-15)** : les **4 services
+        +** api / worker / scanner / ui sont en ligne et le pipeline uplo
+        +ad→scan→verdict fonctionne (test **EICAR → `INFECTED`**, fichier
+        + infecté → **403** au download). Détail des écueils rencontrés e
+        +t de leurs correctifs dans la section **Déploiement réel — piège
+        +s rencontrés (2026-07-15)** plus bas (PR #12 backend, PR #14 sca
+        +nner). Voir aussi **CI/CD — auth WIF** pour l'identité de déploi
+        +ement.                                                          
+      4  
+      5  ## Topologie cible (Cloud Run) — 3 services (depuis D15, scanner
+          externalisé)
+      6  - **`api`** (public, `X-API-Key` vérifié dans l'app) : sert `/ap
+         i/**`. **Mono-conteneur** (app seul ; DB Supabase en TLS direct 
+         depuis D17 → plus de sidecar).
+
+⏺ Update(.claude/memory/infra.md)
+  ⎿  Added 12 lines
+      58  - Backend : `.env.example` (PR #26) — SPRING_PROFILES_ACTIVE, S
+          TORAGE_LOCAL_DIR/PUBLIC_BASE_URL (local), GCS_BUCKET/DB_*/GCP_P
+          ROJECT_ID/PUBSUB_SCAN_TOPIC/GOOGLE_APPLICATION_CREDENTIALS (gcp
+          ). **Depuis D15** : `CLAMAV_*` remplacés par `SCANNER_URL`/`SCA
+          NNER_AUDIENCE`/`SCANNER_OIDC_ENABLED`. `.env` gitignoré.
+      59  - Frontend : `.env.example` préexistant (jalon 4), `.env` déjà 
+          gitignoré.
+      60  
+      61 +## Déploiement réel — pièges rencontrés et correctifs (2026-07-
+         +15)                                                            
+      62 +Premier déploiement complet sur `praxedo-upload-test`. Ordre qu
+         +i marche : **infra une fois par un owner** (SA + bucket + pubsu
+         +b + `iam` + secret) → **scanner** `make all` → **backend** `mak
+         +e deploy` (+ `pubsub` pour la notif GCS) → `--ingress=all` sur 
+         +le scanner. Écueils, tous corrigés :                           
+      63 +- **Secret Manager — `Permission denied on secret`** : les SA r
+         +untime (api/worker) doivent avoir `roles/secretmanager.secretAc
+         +cessor` sur `praxedo-db-password`. Posé par `make iam` (dans `m
+         +ake infra`), **pas** par `make deploy`. Le `DEPLOY_SA` du CI n'
+         +a **pas** le droit d'écrire la policy IAM d'un secret (par desi
+         +gn) → provisioning one-shot par un owner. (`deploy/README.md` §
+         +Dépannage, PR #12)                                             
+      64 +- **Flyway sur Supabase — `Found non-empty schema(s) "public" b
+         +ut no schema history table`** : Supabase pré-remplit `public` →
+         + Flyway refuse de migrer. Fix : `spring.flyway.baseline-on-migr
+         +ate=true` + `baseline-version=0` (profil `gcp`) → baseline à 0 
+         +**puis** applique V1 (le défaut baseline-version=1 SAUTERAIT V1
+         +, laissant l'app sans tables vu `ddl-auto:none`). **1ʳᵉ migrati
+         +on** : préférer le **session pooler `:5432`** (le transaction p
+         +ooler `:6543` casse les locks de session Flyway). (PR #12)     
+      65 +- **Pooler Supabase — `FATAL: (ENOIDENTIFIER) no tenant identif
+         +ier`** : `DB_USER` doit être `postgres.<project-ref>` (ici `pos
+         +tgres.tmimrnpsbduweomeewyj`), pas `postgres` nu — le pooler (`:
+         +5432` **et** `:6543`) route les tenants par ce suffixe. Garde-f
+         +ou `check-db-user` (prérequis `deploy-api`/`deploy-worker`). Va
+         +riable GitHub `DB_USER` déjà correcte. (PR #12)                
+      66 +- **Image scanner arm64** : `docker build` local sur Apple Sili
+         +con → arm64, refusé par Cloud Run (`manifest ... must support a
+         +md64/linux`). Fix : `docker buildx build --platform linux/amd64
+         + --provenance=false --push` (amd64 en local via QEMU + CI amd64
+         +, manifest unique). Défaut `BUCKET` du Makefile scanner était `
+         +$(PROJECT_ID)-praxedo-files` (inexistant) → corrigé `praxedo-fi
+         +les`. (PR #14)                                                 
+      67 +- **Agent de service GCS créé paresseusement** : `service-<num>
+         +@gs-project-accounts…` n'existe qu'après une 1ʳᵉ opération qui 
+         +le déclenche → `make pubsub` échoue (`does not exist`). Forcer 
+         +: `gcloud storage service-agent --project=…` puis relancer.    
+      68 +- **Scanner `ingress=internal` casse worker→scanner** : appel C
+         +loud Run→Cloud Run via l'URL `*.run.app` = trafic **externe** →
+         + **403** malgré `run.invoker`. Repassé en `--ingress=all` (scan
+         +ner reste privé : `run.invoker` + OIDC = seul gardien). Alterna
+         +tive propre prod : Direct VPC egress sur le worker.            
+      69 +- **Pas d'endpoint d'admin pour créer une clé API en `gcp`** : 
+         +`ApiKeyService.createClient()` n'est appelé qu'au seed du profi
+         +l `local`. Pour tester/exploiter : insérer une ligne `api_clien
+         +t` (`api_key_hash` = `base64(sha256(rawKey))`). **Gap produit**
+         + à combler (endpoint d'admin) pour un vrai livrable.           
+      70 +                                                               
+      71 +**Validation e2e** : `POST /api/files` (URL signée V4) → `PUT` 
+         +GCS → notif `OBJECT_FINALIZE` → Pub/Sub → worker → scanner (Cla
+         +mAV ~355k sigs) → verdict en base, ~3 s. EICAR → `INFECTED` (`E
+         +icar-Test-Signature`) ; `GET /content` sur infecté → **403** (s
+         +eul `CLEAN` téléchargeable).                                   
+      72 +                                                               
+      73  ## Doc d'architecture
+      74  `praxedo-upload-backend/docs/architecture.html` (PR #27) : sché
+          ma visuel autonome (hexagonal, cycle de vie, topologie déploiem
+          ent, choix). Rendu vérifié au navigateur.
+      75  
+
+⏺ Je mets à jour la ligne d'index pour refléter le déploiement réussi :
+
+⏺ Update(.claude/memory/index.md)
+  ⎿  Added 1 line, removed 1 line
+      6  - [decisions-archi](decisions-archi.md) — Journal des décisions 
+         d'architecture (ADR light). Inclut **D16** (bascule **monorepo**
+          `praxedo-upload`, remplace D3) et **D17** (**Supabase Postgres*
+         * au lieu de Cloud SQL, 🔄 à implémenter).
+      7  - [bonnes-pratiques](bonnes-pratiques.md) — Bonnes pratiques tra
+         nsverses : injection de dépendances, testabilité, découplage du 
+         framework (ne pas être bloqué par Spring en test).
+      8  - [frontend-ui](frontend-ui.md) — Frontend `praxedo-upload-ui` (
+         jalon 4) : stack Vite/React/TS/react-query/MSW, couches découplé
+         es, contract-first, fail-open, fidélité maquette + **alignement 
+         vérifié sur le contrat backend réel** (PR #18) + piège auto-trig
+         ger scan en local.
+      9 -- [infra](infra.md) — Outillage déploiement GCP (non exécuté) : 
+        -topologie Cloud Run **3 services** api + worker(léger) + **scann
+        -er** (Python+ClamAV, D15), Makefile gcloud, IAM moindre privilèg
+        -e, sidecar Cloud SQL Auth Proxy — **caduc avec D17 (Supabase Pos
+        -tgres remplace Cloud SQL)**.                                    
+      9 +- [infra](infra.md) — Déploiement GCP : **✅ 4 services (api/wor
+        +ker/scanner/ui) déployés et validés e2e sur `praxedo-upload-test
+        +` (2026-07-15)** — EICAR → INFECTED, infecté → 403. Topologie Cl
+        +oud Run 3 services (D15), Makefile gcloud, IAM moindre privilège
+        +, CI/CD WIF. **Section pièges réels** : secret IAM one-shot, bas
+        +eline Flyway Supabase, pooler `postgres.<ref>`, image amd64 (bui
+        +ldx), agent GCS paresseux, ingress Cloud Run→Cloud Run. PR #12 (
+        +backend), #14 (scanner).                                        
+
+⏺ Tout est fait. Voici le bilan des trois actions.
+
+  1) Fix scanner → PR #14 ✅
+
+  task/fix-scanner-deploy-amd64 (depuis main), 1 fichier :
+  https://github.com/soulemantraore/praxedo-upload/pull/14 (buildx amd64 +
+  défaut BUCKET). Tu es resté sur task/doc-conception.
+
+  2) CI — bonne nouvelle, il est déjà quasi bon
+
+  En vérifiant les variables GitHub, le vrai bug (le bucket) est déjà corrigé :
+
+  ┌────────────┬───────────────────────────────┬─────────────────────────────┐
+  │  Variable  │            Valeur             │           Verdict           │
+  ├────────────┼───────────────────────────────┼─────────────────────────────┤
+  │ GCS_BUCKET │ praxedo-files                 │ ✅ (déjà mis à jour         │
+  │            │                               │ aujourd'hui)                │
+  ├────────────┼───────────────────────────────┼─────────────────────────────┤
+  │ DB_USER    │ postgres.tmimrnpsbduweomeewyj │ ✅ suffixe tenant correct   │
+  ├────────────┼───────────────────────────────┼─────────────────────────────┤
+  │ DB_PORT    │ (non défini) → défaut 6543    │ ✅ OK maintenant            │
+  └────────────┴───────────────────────────────┴─────────────────────────────┘
+
+  Le backend CI (backend-deploy.yml, auto sur push praxedo-upload-backend/**)
+  passerait maintenant : bucket ✅, user ✅, et comme la migration est déjà 
+  appliquée (schéma en v1), le :6543 ne joue plus aucune migration → l'app
+  démarre. Le :6543 est d'ailleurs le bon choix pour le runtime (transaction
+  pooler). Le scanner CI est en workflow_dispatch (manuel) et tourne sur runner
+  amd64 → OK.
+
+  Seul angle mort restant : une future migration (V2+) tournerait sur :6543 en
+  CI → risque de lock Flyway. Deux options le jour venu (pas maintenant, YAGNI)
+  : soit déployer cette fois-là avec DB_PORT=5432, soit donner à Flyway une URL 
+  :5432 dédiée en gardant le runtime sur :6543 (petit changement de code, je
+  peux le spécifier). Rien d'urgent à changer côté CI.
+
+  3) Mémoire → infra.md + index.md mis à jour ✅
+
+  Statut passé à « déployé + validé e2e », et nouvelle section « pièges réels 
+  (2026-07-15) » : secret IAM one-shot, baseline Flyway Supabase, pooler
+  postgres.<ref>, image amd64/buildx, agent GCS paresseux, ingress Cloud
+  Run→Cloud Run, absence d'endpoint d'admin pour les clés. (Fichiers modifiés
+  non commités sur task/doc-conception — je te laisse choisir : les committer
+  avec ton travail de doc, ou une petite branche à part ?)
+
+  ---
+  Récap PRs ouvertes (à revoir/fusionner par toi) : #12 (backend — baseline
+  Flyway + garde-fou DB_USER + doc) et #14 (scanner — amd64/buildx + bucket).
+  Les fusionner sur main donne la robustesse « projet neuf » ; pour le projet
+  test actuel, tout tourne déjà.
+
+  Il reste une vraie limite produit que j'ai notée : aucun moyen de créer une
+  clé API en prod (seed local uniquement). Tu veux que je te propose une spec 
+  d'endpoint d'admin pour ça (c'est le seul manque « livrable » que je vois) ?
+  Ou on s'arrête là — le micro-service est déployé et prouvé fonctionnel de bout
+  en bout. 🎉
+
+✻ Worked for 10m 27s

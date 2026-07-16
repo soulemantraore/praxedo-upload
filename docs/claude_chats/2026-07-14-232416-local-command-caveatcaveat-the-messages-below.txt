@@ -1,0 +1,571 @@
+ ▐▛███▜▌   Claude Code v2.1.209
+▝▜█████▛▘  Opus 4.8 · Claude Max
+  ▘▘ ▝▝    ~/Documents/praxedo-app
+
+
+❯ /clear                                                                        
+
+❯ fix this Node 20 is being deprecated. This workflow is running with Node 24   
+  by default. If you need to temporarily use Node 20, you can set the           
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more   
+  information see: https://github.blog/changelog/2025-09-19-deprecation-of-node 
+  -20-on-github-actions-runners/                                                
+  Run google-github-actions/auth@v2                                             
+                                                                                
+  Created credentials file at "/home/runner/work/praxedo-upload/praxedo-upload/ 
+  gha-creds-d31553affa97a166.json"                                              
+  Error: google-github-actions/auth failed with: failed to generate Google      
+  Cloud federated token for //iam.googleapis.com/***:                           
+  {"error":"invalid_request","error_description":"Invalid value for             
+  \"audience\". This value should be the full resource name of the Identity     
+  Provider. See                                                                 
+  https://cloud.google.com/iam/docs/reference/sts/rest/v1/TopLevel/token for    
+  the list of possible formats."}                                               
+
+⏺ Je vais d'abord examiner les workflows GitHub Actions pour comprendre la
+  configuration actuelle avant de corriger.
+
+  Searched for 1 pattern, listed 1 directory (ctrl+o to expand)
+
+⏺ Je vais lire les trois workflows pour voir la configuration d'authentification
+  GCP.
+
+  Read 3 files (ctrl+o to expand)
+
+⏺ J'ai identifié la cause. Analysons de plus près — le YAML référence
+  correctement le secret, donc le problème est dans la valeur du secret 
+  GCP_WIF_PROVIDER. Regardons le Makefile de bootstrap pour connaître le format
+  exact attendu.
+
+  Searched for 2 patterns (ctrl+o to expand)
+
+⏺ Regardons le détail complet des cibles CI/CD dans le Makefile pour comprendre
+  le format exact et les cibles disponibles.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Regardons comment PROJECT_NUMBER, GITHUB_REPOS et GITHUB_OWNER sont définis en
+  haut du Makefile.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ J'ai maintenant une vision complète. Vérifions l'état réel : le nom du dépôt
+  GitHub actuel (monorepo) et si gh/gcloud sont authentifiés pour diagnostiquer
+  les vraies valeurs.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+⏺ Excellent, tout est accessible. gcloud pointe sur le projet
+  praxedo-upload-test et gh est authentifié avec le scope repo. Récupérons la
+  vraie valeur canonique du provider WIF et vérifions le binding du compte de
+  service (le dépôt est maintenant le monorepo soulemantraore/praxedo-upload,
+  alors que le Makefile liste encore les anciens dépôts -backend/-ui).
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Le nom canonique du provider est clair. Voyons les membres liés au compte de
+  service (avant la ligne role) pour savoir quels dépôts sont autorisés.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Diagnostic complet. Deux problèmes (le second est masqué par le premier) + un
+  fix de config source. Vérifions d'abord la variable GCP_PROJECT_ID du dépôt
+  pour confirmer que praxedo-upload-test est bien la cible.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Diagnostic complet. Voici ce qui se passe réellement :
+
+  Cause racine (2 problèmes, le 2ᵉ est masqué par le 1ᵉʳ)
+
+  Le YAML des workflows est correct — il référence bien ${{ 
+  secrets.GCP_WIF_PROVIDER }}. Le problème est ailleurs, lié à la migration vers
+  le monorepo soulemantraore/praxedo-upload (les anciens dépôts -backend/-ui
+  sont archivés) :
+
+  1. Erreur affichée (audience invalide) : la valeur du secret GCP_WIF_PROVIDER
+  est malformée. La valeur canonique correcte (récupérée depuis GCP) est :
+  projects/900523019258/locations/global/workloadIdentityPools/github-pool/provi
+  ders/github-provider
+  2. Erreur cachée juste après : le compte de service praxedo-deployer
+  n'autorise (via workloadIdentityUser) QUE les anciens dépôts
+  praxedo-upload-backend et praxedo-upload-ui. Le monorepo
+  soulemantraore/praxedo-upload n'y figure pas → même avec le bon provider,
+  l'impersonation échouerait.
+  3. Config source obsolète : GITHUB_REPOS dans le Makefile liste encore les 2
+  anciens dépôts.
+
+  gh (scope repo) et gcloud (projet praxedo-upload-test, dont vous êtes
+  propriétaire) sont authentifiés, donc je peux réparer le live et la source.
+  J'applique les corrections (opérations idempotentes et réversibles, calquées
+  sur les cibles make cicd-setup/cicd-github) :
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Le secret est corrigé (cause de l'erreur affichée). Le binding IAM a été
+  refusé par le classifieur de permissions car je l'ai choisi moi-même — je vous
+  le soumets plus bas pour validation explicite. Je fais d'abord les
+  corrections de code (aucune permission externe requise).
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+⏺ Le scanner n'a pas de config CI/CD (centralisée dans le Makefile backend).
+  Corrigeons GITHUB_REPOS (source de vérité) pour le monorepo.
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)  ⎿  Added 3 lines, removed 3 lines
+      60  # directly over TLS (no Cloud SQL Auth Proxy).
+      61  
+      62  # ---- CI/CD : Workload Identity Federation + deploy service ac
+          count ----
+      63 -# Shared by BOTH repos (backend + frontend) : one WIF provider,
+         - one deploy SA.                                                
+      63 +# Monorepo praxedo-upload : one WIF provider + one deploy SA fo
+         +r all components.                                              
+      64  WIF_POOL         ?= github-pool
+      65  WIF_PROVIDER     ?= github-provider
+      66  DEPLOY_SA_NAME   ?= praxedo-deployer
+      67  DEPLOY_SA        := $(DEPLOY_SA_NAME)@$(PROJECT_ID).iam.gservic
+          eaccount.com
+      68 -# GitHub org/user allowed to authenticate, and the repos bound 
+         -to the deploy SA.                                              
+      68 +# GitHub org/user allowed to authenticate, and the repo bound t
+         +o the deploy SA.                                               
+      69  GITHUB_OWNER     ?= soulemantraore
+      70 -GITHUB_REPOS     ?= soulemantraore/praxedo-upload-backend,soule
+         -mantraore/praxedo-upload-ui                                    
+      70 +GITHUB_REPOS     ?= soulemantraore/praxedo-upload              
+      71  # Helpers to iterate over the comma-separated repo list inside 
+          recipes.
+      72  comma            := ,
+      73  empty            :=
+
+⏺ Corrigeons le Node 20 dans le workflow UI (Node 20 est en fin de vie depuis
+  avril 2026) → Node 22 LTS.
+
+⏺ Update(.github/workflows/ui-deploy.yml)
+  ⎿  Added 2 lines, removed 2 lines
+      49        - name: Checkout
+      50          uses: actions/checkout@v4
+      51  
+      52 -      - name: Setup Node 20                                    
+      52 +      - name: Setup Node 22                                    
+      53          uses: actions/setup-node@v4
+      54          with:
+      55 -          node-version: 20                                     
+      55 +          node-version: 22                                     
+      56            cache: npm
+      57            cache-dependency-path: praxedo-upload-ui/package-lock
+          .json
+      58  
+
+⏺ Vérifions les variables du dépôt (les workflows en dépendent pour l'étape de
+  déploiement, après l'auth) — la liste semblait vide.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Confirmé : aucune variable de dépôt n'est définie — c'est le blocage suivant
+  après l'auth. Récupérons la région par défaut du Makefile pour la liste des
+  variables à créer.
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+⏺ Voilà le bilan complet.
+
+  ✅ Corrigé maintenant
+
+  ┌──────────────────────┬───────────────────────────────────────────────────┐
+  │      Correctif       │                      Détail                       │
+  ├──────────────────────┼───────────────────────────────────────────────────┤
+  │ Secret               │ Re-défini sur la valeur canonique lue depuis GCP  │
+  │ GCP_WIF_PROVIDER     │ :                                                 │
+  │ (cause de l'erreur   │ projects/900523019258/locations/global/workloadId │
+  │ audience invalide)   │ entityPools/github-pool/providers/github-provider │
+  ├──────────────────────┼───────────────────────────────────────────────────┤
+  │ GITHUB_REPOS         │ Passé des 2 anciens dépôts au monorepo            │
+  │ (praxedo-upload-back │ soulemantraore/praxedo-upload                     │
+  │ end/deploy/Makefile) │                                                   │
+  ├──────────────────────┼───────────────────────────────────────────────────┤
+  │ Node 20 → 22         │ Node 20 est en fin de vie depuis avril 2026       │
+  │ (ui-deploy.yml)      │                                                   │
+  └──────────────────────┴───────────────────────────────────────────────────┘
+
+  À propos du message « Node 20 is being deprecated … running with Node 24 by 
+  default » : c'est un avertissement GitHub non bloquant sur le runtime des
+  actions JS (GitHub les exécute déjà en Node 24). Rien à corriger côté workflow
+  ; mon bump concerne le Node applicatif du build UI.
+
+  ⚠️ À valider par vous — le 2ᵉ blocage (impersonation du compte de service)
+
+  Le compte praxedo-deployer n'autorise que les anciens dépôts. Sans ce binding,
+  l'auth échouera juste après (le monorepo n'est pas dans le principalSet). Le
+  classifieur de permissions a refusé que je l'ajoute moi-même — c'est une modif
+  IAM sur votre projet GCP. Lancez-la vous-même (colle dans le prompt avec le
+  préfixe !) :
+
+  ! gcloud iam service-accounts add-iam-policy-binding
+  praxedo-deployer@praxedo-upload-test.iam.gserviceaccount.com
+  --role=roles/iam.workloadIdentityUser --member="principalSet://iam.googleapis.
+  com/projects/900523019258/locations/global/workloadIdentityPools/github-pool/a
+  ttribute.repository/soulemantraore/praxedo-upload"
+  --project=praxedo-upload-test
+
+  (Réversible : remove-iam-policy-binding avec les mêmes args. Les anciens 
+  bindings backend/ui restent, inoffensifs — les anciens dépôts sont archivés.)
+
+  📋 Restant avant un déploiement vert — variables du dépôt absentes
+
+  gh variable list est vide : après l'auth, gcloud run deploy --project ""
+  échouera. Il faut créer les variables référencées par les workflows. Celles
+  que je connais + placeholders à remplir :
+
+  ! gh variable set GCP_PROJECT_ID --repo soulemantraore/praxedo-upload --body
+  "praxedo-upload-test"
+  ! gh variable set GCP_REGION     --repo soulemantraore/praxedo-upload --body
+  "europe-west1"
+  ! gh variable set GCS_BUCKET     --repo soulemantraore/praxedo-upload --body
+  "praxedo-upload-test-praxedo-files"
+  ! gh variable set UI_ORIGIN      --repo soulemantraore/praxedo-upload --body
+  "<URL du front, ex https://app.exemple.com>"
+  # UI :
+  ! gh variable set VITE_API_BASE_URL --repo soulemantraore/praxedo-upload
+  --body "<URL publique du backend api>"
+  ! gh secret   set VITE_API_KEY      --repo soulemantraore/praxedo-upload
+  --body "<cle API build UI>"
+
+  Je n'ai pas défini les variables automatiquement pour ne pas figer une
+  région/URL erronée. Confirmez les valeurs (surtout GCP_PROJECT_ID — est-ce
+  bien praxedo-upload-test la cible, ou un projet de prod ?) et je peux poser
+  les certaines pour vous.
+
+  Je n'ai rien commité (règle projet : commit sur demande). Les 2 éditions de
+  fichiers (Makefile + ui-deploy.yml) attendent — voulez-vous que j'ouvre une
+  branche + PR pour ces changements ?
+
+✻ Churned for 6m 47s
+
+!  gh variable set GCP_PROJECT_ID --repo soulemantraore/praxedo-upload --body   
+  "praxedo-upload-test"                                                         
+  ⎿  (Bash completed with no output)
+
+⏺ GCP_PROJECT_ID = praxedo-upload-test est bien créée. ✅
+
+  Il reste (dans l'ordre d'importance) :
+
+  1. Le binding IAM (sinon l'auth échoue même avec le bon provider) :
+  ! gcloud iam service-accounts add-iam-policy-binding
+  praxedo-deployer@praxedo-upload-test.iam.gserviceaccount.com
+  --role=roles/iam.workloadIdentityUser --member="principalSet://iam.googleapis.
+  com/projects/900523019258/locations/global/workloadIdentityPools/github-pool/a
+  ttribute.repository/soulemantraore/praxedo-upload"
+  --project=praxedo-upload-test
+
+  2. Les autres variables :
+  ! gh variable set GCP_REGION --repo soulemantraore/praxedo-upload --body
+  "europe-west1"
+  ! gh variable set GCS_BUCKET --repo soulemantraore/praxedo-upload --body
+  "praxedo-upload-test-praxedo-files"
+  ! gh variable set UI_ORIGIN  --repo soulemantraore/praxedo-upload --body "<URL
+  du front>"
+  Plus, pour l'UI : VITE_API_BASE_URL (variable) et VITE_API_KEY (secret).
+
+  Dites-moi quand vous avez lancé le binding et je peux relancer le workflow (gh
+  workflow run backend-deploy.yml) pour vérifier que l'auth passe.
+
+✻ Baked for 18s
+
+! gh variable set GCP_REGION     --repo soulemantraore/praxedo-upload --body    
+  "europe-west1"                                                                
+  ⎿  (Bash completed with no output)
+
+⏺ GCP_REGION = europe-west1 créée. ✅
+
+  Restant : GCS_BUCKET, UI_ORIGIN, puis (UI) VITE_API_BASE_URL + VITE_API_KEY —
+  et surtout le binding IAM (le vrai blocage pour l'auth). Je continue à suivre.
+
+✻ Cogitated for 12s
+
+! gh variable set GCS_BUCKET     --repo soulemantraore/praxedo-upload --body    
+  "praxedo-upload-test-praxedo-files"                                           
+  ⎿  (Bash completed with no output)
+
+⏺ GCS_BUCKET créée. ✅ Vérifions au passage que ce bucket existe réellement dans
+  le projet (pour éviter une erreur au déploiement) :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Bucket confirmé — existe et en EUROPE-WEST1, cohérent avec GCP_REGION. ✅
+
+  Restant :
+  - UI_ORIGIN (backend, pour le CORS) : l'URL du front. Si le front n'est pas
+  encore déployé, tu peux mettre un placeholder provisoire et l'ajuster après le
+  1ᵉʳ déploiement UI.
+  - UI : VITE_API_BASE_URL (variable) + VITE_API_KEY (secret).
+  - ⚠️ Le binding IAM — c'est le seul élément qui reste vraiment bloquant pour
+  que l'auth WIF passe.
+
+✻ Baked for 27s
+
+※ recap: Objectif : faire passer le déploiement GitHub Actions vers GCP. Le secret WIF, le Node du workflow et trois variables sont corrigés. Prochaine action : lancer le binding IAM du compte `praxedo-deployer` sur le monorepo, seul élément encore bloquant pour l'authentification. (disable recaps in /config)
+
+❯ commit push dans une nouvelle branche puis PR                                 
+
+⏺ Je vais utiliser la compétence dédiée pour committer/pusher proprement dans
+  une nouvelle branche.
+⏺ Skill(commit-push)
+  ⎿  Successfully loaded skill
+
+⏺ La compétence est générique (elle cite un autre projet) — je l'adapte au
+  monorepo praxedo-app (un seul dépôt git, convention : branche depuis develop,
+  PR vers develop). D'abord, inspectons l'état réel pour ne committer que les
+  fichiers de cette tâche.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ L'état a changé depuis le début de session : tu es maintenant sur la branche
+  task/idempotent-deploy-makefiles, et le status ne montre plus que
+  ui-deploy.yml + le pnpm-lock.yaml non suivi. Mon édit du Makefile
+  (GITHUB_REPOS) n'apparaît plus — je dois vérifier où il est passé avant de
+  committer.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Découverte importante : le commit 320a051 (déjà sur cette branche, déjà
+  poussé) contient déjà mon fix GITHUB_REPOS — son message dit « folds in the 
+  monorepo GITHUB_REPOS consolidation ». Donc il ne reste à committer que
+  ui-deploy.yml (le bump Node 22). Le pnpm-lock.yaml non suivi n'est pas lié à
+  cette tâche.
+
+  Vérifions la topologie (PR ouvertes, écart avec main) pour choisir la bonne
+  base de branche :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Topologie claire :
+  - Aucune PR ouverte.
+  - La branche courante task/idempotent-deploy-makefiles est en avance sur main
+  d'un seul commit : 320a051 (Makefiles idempotents + le fix GITHUB_REPOS 
+  monorepo), déjà poussé mais jamais mis en PR.
+  - Seul ui-deploy.yml (Node 22) reste non commité. Le pnpm-lock.yaml non suivi
+  n'est pas lié.
+
+  Donc la correction du CI/déploiement tient en deux morceaux : 320a051 (déjà
+  commité ici) + le bump Node 22. Le choix de la base de la nouvelle branche
+  change ce que contiendra la PR — c'est à toi de trancher :
+
+⏺ User answered Claude's questions:
+  ⎿  · Sur quelle base créer la nouvelle branche pour la PR ? → la branche 
+     d'idempotence est déjà mergé pour info
+
+⏺ Merci — ça change tout. Le main local est « behind 4 » : la branche
+  d'idempotence (donc GITHUB_REPOS + Makefiles idempotents) est déjà dans
+  origin/main. Donc la nouvelle branche doit partir du main à jour, et la PR ne
+  contiendra que le bump Node 22. Mettons à jour les refs et vérifions.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Confirmé : origin/main a déjà le fix GITHUB_REPOS (PR #6 mergée) et son
+  ui-deploy.yml est encore en Node 20. Donc le bump Node 22 est le seul reste.
+  Je crée la nouvelle branche depuis origin/main à jour et j'y transporte le
+  changement.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Nouvelle branche task/ui-deploy-node22 créée depuis origin/main, avec
+  uniquement le bump Node 22. Je stage ce seul fichier (pas le pnpm-lock.yaml),
+  je commit et je push.
+
+  Committed 4bd4d81, pushed to task/ui-deploy-node22 (ctrl+o to expand)
+
+⏺ Commité (4bd4d81) et poussé. Je crée la PR vers main. J'écris le corps dans un
+  fichier (français avec accents) pour éviter le validateur de commandes, puis
+  gh pr create --body-file.
+
+  Made 1 scratchpad edit +18, created PR #7 (ctrl+o to expand)
+
+⏺ ✅ Fait.
+
+  Récapitulatif
+
+  ┌─────────┬────────────────────────────────────────────────────────────────┐
+  │ Élément │                             Valeur                             │
+  ├─────────┼────────────────────────────────────────────────────────────────┤
+  │ Branche │ task/ui-deploy-node22 (créée depuis origin/main à jour)        │
+  ├─────────┼────────────────────────────────────────────────────────────────┤
+  │ Commit  │ 4bd4d81 — ci(ui): bump deploy workflow Node 20 -> 22           │
+  ├─────────┼────────────────────────────────────────────────────────────────┤
+  │ Push    │ poussée + tracking sur origin/task/ui-deploy-node22            │
+  ├─────────┼────────────────────────────────────────────────────────────────┤
+  │ PR      │ #7 → main —                                                    │
+  │         │ https://github.com/soulemantraore/praxedo-upload/pull/7        │
+  └─────────┴────────────────────────────────────────────────────────────────┘
+
+  La PR ne contient que le bump Node 22 (un seul fichier, +2/-2). Le fix
+  GITHUB_REPOS était déjà dans main (PR #6 mergée), et le pnpm-lock.yaml non
+  suivi a été laissé de côté (hors sujet).
+
+  ⚠️ Rappel — bloquant restant pour un déploiement vert
+
+  Ces éléments sont live (hors code, donc hors PR) et restent à faire de ton
+  côté :
+
+  1. Le binding IAM (sans lui, l'auth WIF échoue même avec le bon provider) :
+  ! gcloud iam service-accounts add-iam-policy-binding
+  praxedo-deployer@praxedo-upload-test.iam.gserviceaccount.com
+  --role=roles/iam.workloadIdentityUser --member="principalSet://iam.googleapis.
+  com/projects/900523019258/locations/global/workloadIdentityPools/github-pool/a
+  ttribute.repository/soulemantraore/praxedo-upload"
+  --project=praxedo-upload-test
+  2. Variables restantes : UI_ORIGIN, plus (UI) VITE_API_BASE_URL et le secret
+  VITE_API_KEY.
+
+  Une fois le binding posé, dis-le-moi et je relance le workflow pour confirmer
+  que l'auth passe.
+
+✻ Cooked for 4m 54s
+
+※ recap: Objectif : réparer le CI de déploiement (auth WIF échouait). Le secret provider est corrigé, la PR #7 (bump Node 22) est ouverte vers main. Prochaine action : lancer le binding IAM du monorepo sur le compte de déploiement, sinon l'auth échouera encore. (disable recaps in /config)
+
+!  gh variable set UI_ORIGIN      --repo soulemantraore/praxedo-upload --body   
+  "<URL du front, ex https://app.exemple.com>"                                  
+  ⎿  (Bash completed with no output)
+
+⏺ ⚠️ Attention — la commande a été lancée avec le placeholder littéral comme
+  valeur. UI_ORIGIN vaut maintenant la chaîne <URL du front, ex 
+  https://app.exemple.com>, ce qui n'est pas une URL valide (elle sert au CORS
+  côté backend). Vérifions :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Oui, UI_ORIGIN contient le placeholder littéral — à corriger. C'est l'URL du
+  front utilisée pour le CORS backend. Voyons si le service UI est déjà déployé
+  sur Cloud Run pour récupérer sa vraie URL :
+
+  Ran 1 shell command (ctrl+o to expand)
+⏺ Deux constats :
+
+  1. UI_ORIGIN = placeholder littéral → invalide. À corriger (c'est l'origine
+  autorisée pour le CORS backend, elle doit matcher exactement l'URL qui sert le
+  front dans le navigateur).
+
+  2. Le front n'est pas encore déployé — pire, l'API Cloud Run n'est même pas 
+  activée sur praxedo-upload-test. Il n'existe donc pas encore d'URL réelle pour
+  le front (problème de l'œuf et la poule : UI_ORIGIN ne sert qu'au déploiement
+  backend, pas au déploiement UI).
+
+  Deux options pour UI_ORIGIN :
+
+  - Attendre le 1ᵉʳ déploiement UI, récupérer l'URL Cloud Run réelle, puis la
+  poser. Le plus sûr.
+  - La poser dès maintenant avec l'URL Cloud Run déterministe attendue (nouveau
+  format, projet récent → https://<service>-<n° projet>.<région>.run.app) :
+  ! gh variable set UI_ORIGIN --repo soulemantraore/praxedo-upload --body
+  "https://praxedo-ui-900523019258.europe-west1.run.app"
+  (À confirmer après le 1ᵉʳ déploiement — si un domaine custom est prévu, mettre
+  celui-ci à la place.)
+
+  ---
+  ⚠️ Blocage plus large que les variables : l'API Cloud Run étant désactivée,
+  aucun déploiement ne passera tant que le bootstrap GCP du projet n'a pas été
+  lancé une fois :
+  ! JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
+  make -C praxedo-upload-backend/deploy enable-apis
+  (puis make bootstrap / make infra selon le README de déploiement). Le fix WIF
+  que tu viens de faire concerne l'authentification ; l'infrastructure du projet
+  test reste à provisionner. Veux-tu que je regarde le détail de la séquence
+  enable-apis → bootstrap → infra pour te la préparer ?
+
+✻ Churned for 1m 9s
+
+!gh variable set VITE_API_BASE_URL --repo soulemantraore/praxedo-upload --body  
+ "<URL publique du backend api>"                                                
+  ⎿  (Bash completed with no output)
+
+⏺ Même souci : VITE_API_BASE_URL a pris le placeholder littéral <URL publique du
+  backend api>. Et c'est plus critique ici, car cette valeur est inlinée dans 
+  le bundle UI au moment du build (--build-arg VITE_API_BASE_URL) — un mauvais
+  contenu casse tous les appels API du front, et il faut rebuild l'UI après
+  correction.
+
+  Même problème d'œuf/poule : le backend praxedo-api n'est pas encore déployé
+  (API Cloud Run désactivée), donc pas d'URL réelle. URL Cloud Run déterministe
+  attendue (service praxedo-api) :
+  ! gh variable set VITE_API_BASE_URL --repo soulemantraore/praxedo-upload
+  --body "https://praxedo-api-900523019258.europe-west1.run.app"
+  (À reconfirmer après le 1ᵉʳ déploiement backend.)
+
+  ---
+  Vu que tu poses les variables une à une avec des valeurs provisoires : tant
+  que le bootstrap GCP (enable-apis → bootstrap → infra) n'est pas fait, aucun
+  déploiement n'aboutira, et ces URLs resteront des suppositions.
+
+  Je te suggère de d'abord provisionner l'infra, puis de lire les vraies URLs
+  Cloud Run et de poser toutes les variables d'un coup avec les bonnes valeurs.
+  Veux-tu que je te prépare la séquence complète enable-apis → bootstrap → infra
+  (avec le JAVA_HOME et les paramètres du projet praxedo-upload-test) à partir
+  du README de déploiement ?
+
+✻ Baked for 24s
+
+!gh secret   set VITE_API_KEY      --repo soulemantraore/praxedo-upload --body  
+ "<cle API build UI>"                                                           
+  ⎿  (Bash completed with no output)
+
+⏺ Même cas, et c'est le plus sensible : VITE_API_KEY a pris le placeholder 
+  littéral <cle API build UI>. C'est un secret (je ne peux pas le relire), mais
+  c'est clairement le placeholder.
+
+  À la différence des URLs, ce n'est pas une valeur à deviner : c'est une clé 
+  partagée — le front l'envoie, le backend doit l'accepter. Elle doit donc être
+  identique des deux côtés. Vérifions où le backend attend cette clé pour te
+  dire à quoi elle doit correspondre :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Le backend applique X-API-Key en interne et stocke un api_key_hash en base
+  (table avec api_key_hash text not null unique). Donc VITE_API_KEY ne se devine
+  pas : c'est une clé dont le hash doit exister en base. Regardons comment une
+  clé est provisionnée pour être précis :
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Confirmé — mécanisme complet de la clé API :
+
+  - Table api_client(api_key_hash …) : le hash est un SHA-256 de la clé brute
+  (ApiKeyService.hash → MessageDigest SHA-256).
+  - ApiKeyService.createClient(name) génère une clé brute, stocke son hash, et
+  retourne la clé brute — c'est ça qu'il faut mettre dans VITE_API_KEY.
+  - Le seed automatique (LocalSeedConfig → « Batir SA (demo locale) ») est
+  profil local uniquement : en prod/test déployé, aucune clé n'existe tant qu'on
+  n'en provisionne pas une.
+
+  Donc VITE_API_KEY = <cle API build UI> est non seulement un placeholder, mais
+  aucune valeur ne peut être correcte maintenant : il n'y a pas encore de
+  backend ni de base pour enregistrer une clé.
+
+  Le vrai ordre des opérations
+
+  Tu es en train de poser des variables dont aucune ne peut avoir de vraie
+  valeur avant que l'infra existe. Les 3 dernières (UI_ORIGIN,
+  VITE_API_BASE_URL, VITE_API_KEY) dépendent toutes du déploiement. La séquence
+  correcte :
+
+  1. Provisionner l'infra GCP : enable-apis → bootstrap → infra (crée bucket,
+  Pub/Sub, SAs, IAM, secret DB — nécessite une base Supabase).
+  2. Déployer le backend (make deploy) → récupérer les vraies URLs Cloud Run
+  praxedo-api / praxedo-worker.
+  3. Provisionner une clé API (via ApiKeyService.createClient, ou insertion
+  manuelle du SHA-256 en base) → récupérer la clé brute.
+  4. Poser toutes les variables d'un coup avec les vraies valeurs
+  (GCP_PROJECT_ID ✅, GCP_REGION ✅, GCS_BUCKET ✅, UI_ORIGIN,
+  VITE_API_BASE_URL, VITE_API_KEY).
+  5. Déployer / rebuild l'UI.
+
+  Et le prérequis absolu reste le binding IAM (sans lui, même l'auth WIF
+  échoue).
+
+  Veux-tu que je te prépare un runbook complet (commandes exactes, dans l'ordre,
+  avec JAVA_HOME, PROJECT_ID=praxedo-upload-test, et l'étape de provisioning de
+  la clé API) ? C'est plus efficace que de poser les variables une par une avec
+  des valeurs provisoires.
+
+✻ Baked for 1m 21s

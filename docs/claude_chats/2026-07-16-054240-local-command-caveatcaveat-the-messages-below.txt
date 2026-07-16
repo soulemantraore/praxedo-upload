@@ -1,0 +1,168 @@
+ ▐▛███▜▌   Claude Code v2.1.207
+▝▜█████▛▘  Opus 4.8 · Claude Max
+  ▘▘ ▝▝    ~/Documents/praxedo-app
+
+ ⚠ Your login expires in 5 days · run /login to renew
+
+❯ /clear                                                                        
+
+❯ Vas dans le dossier téléchargement, tu verras que je viens d'ajouter une      
+  capture d'écran du schéma d'upload de fichier. Donc je veux que tu mettes ce  
+  schéma-là à la place du schéma en Markdown qui a été écrit dans le README.    
+
+⏺ Je vais d'abord regarder la capture d'écran dans le dossier Téléchargements et
+  le README concerné.
+
+  Listed 2 directories (ctrl+o to expand)
+
+⏺ La capture la plus récente est architecture-praxedo-upload.png. Regardons-la
+  ainsi que le README racine pour localiser le schéma Markdown à remplacer.
+
+  Read 2 files (ctrl+o to expand)
+
+⏺ Je comprends : le schéma ASCII dans le README (lignes 22-40, « Architecture
+  d'ensemble ») doit être remplacé par la capture PNG. Voyons la structure de
+  docs/ pour placer l'image au bon endroit.
+
+  Listed 1 directory (ctrl+o to expand)
+
+⏺ Parfait. Je place l'image dans docs/diagrams/ (cohérent avec le
+  flux.excalidraw déjà présent), puis je remplace le bloc ASCII « Architecture
+  d'ensemble » (lignes 22-40) par la capture. Le schéma « Cycle de vie d'un
+  fichier » (états) est distinct de l'upload, je le laisse tel quel.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Maintenant, je remplace le bloc ASCII par la référence à l'image dans le
+  README.
+
+⏺ Update(README.md)
+  ⎿  Added 1 line, removed 19 lines
+      19  Le scan vit dans un **service séparé** (`praxedo-upload-scanner
+          `) que le backend **appelle** ;
+      20  le scanner ne touche jamais la base — seul le backend écrit le 
+          verdict (ADR **D15**).
+      21  
+      22 -```                                                            
+      23 -                 ┌─────────────────┐        X-API-Key          
+      24 -   navigateur ──▶│ praxedo-upload-ui│──────────────────────┐   
+      25 -                 └─────────────────┘                       ▼   
+      26 -                                              ┌────────────────
+         -───────────┐                                                   
+      27 -   upload direct (URL signée)  ──────────────▶│      GCS (bucke
+         -t)         │                                                   
+      28 -                                              └────────────────
+         -───────────┘                                                   
+      29 -                                                     │ object f
+         -inalize                                                        
+      30 -                                                     ▼         
+      31 -                                              Pub/Sub ──push──▶
+         - /internal/scan-events                                         
+      32 -                                                               
+         -       │ (scan-worker)                                         
+      33 -                 ┌──────────────────────────┐   POST /scan {gsU
+         -ri}    ▼                                                       
+      34 -                 │ praxedo-upload-backend    │◀───────────────┐
+         -  ┌──────────────────┐                                         
+      35 -                 │ (domaine + ports/adapters)│  verdict        
+         -└─▶│ praxedo-upload-  │                                        
+      36 -                 │  écrit le verdict (Cloud  │◀────────────────
+         -──│ scanner + ClamAV │                                         
+      37 -                 │  SQL)                     │                 
+         -   └──────────────────┘                                        
+      38 -                 └──────────────────────────┘                  
+      39 -   GET /content ──▶ URL signée de download **uniquement si CLEA
+         -N**, sinon 403                                                 
+      40 -```                                                            
+      22 +![Architecture praxedo-upload : upload avec scan antiviral asyn
+         +chrone (URLs signées direct-to-GCS, événement Pub/Sub vers le b
+         +ackend, scan ClamAV découplé) et téléchargement autorisé unique
+         +ment si le statut est CLEAN](docs/diagrams/architecture-praxedo
+         +-upload.png)                                                   
+      23  
+      24  **Cycle de vie d'un fichier** :
+      25  
+
+⏺ Vérifions le rendu de la section modifiée.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ C'est fait. Voici ce que j'ai modifié :
+
+  1. Image copiée dans le dépôt : docs/diagrams/architecture-praxedo-upload.png
+  (à côté du flux.excalidraw existant, pour rester versionnée et partagée via
+  Git).
+  2. README racine — section « Architecture d'ensemble » : le schéma
+  ASCII/Markdown du flux d'upload (l'ancien bloc en art ASCII) est remplacé par
+  la capture, avec un texte alternatif descriptif pour l'accessibilité.
+
+  J'ai conservé :
+  - le paragraphe d'intro juste au-dessus (le point ADR D15 — le scanner ne
+  touche jamais la base) ;
+  - le bloc « Cycle de vie d'un fichier » (états PENDING → SCANNING → 
+  CLEAN/INFECTED/…), qui est un schéma différent de celui de l'upload et que ta
+  capture ne couvre pas.
+
+  Deux points à valider de ton côté :
+
+  - Chemin relatif docs/diagrams/… : il fonctionne pour un rendu GitHub. Si tu
+  préfères une convention type docs/images/ ou assets/, dis-le-moi.
+  - Le fichier docs/diagrams/architecture-praxedo-upload.png est nouveau et non 
+  commité. Je n'ai pas committé (tu ne me l'as pas demandé) — dis-moi si tu veux
+  que je prépare la branche + Pto la commit.
+
+  Note : ta capture montre aussi la partie téléchargement et un encadré «
+  Pourquoi cette architecture ? » qui n'étaient pas dans l'ancien schéma ASCII —
+  c'est donc plus complet qu'avant.
+
+✻ Sautéed for 1m 54s
+
+※ recap: J'ai remplacé le schéma ASCII d'upload dans le README par ta capture, copiée dans docs/diagrams/architecture-praxedo-upload.png. Prochaine action : committer ce nouveau fichier image et la modif du README si tu le souhaites.
+
+❯ Commit, push, PR et merge                                                     
+
+⏺ Je suis le workflow du projet : branche depuis develop, PR vers develop, puis
+  merge. Vérifions d'abord l'état git.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Je suis sur main (pas détaché). Il n'existe aucune branche develop (ni locale
+  ni distante) et les PR récentes (#22-#24) fusionnent directement dans main —
+  je cible donc main. Je crée une branche de tâche, je commit uniquement le
+  README et l'image (pas le dump de session à la racine).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Bien : seuls le README et l'image sont indexés. Je commit puis je push.
+
+  Committed e7973b6, pushed to task/readme-architecture-diagram (ctrl+o to expand)
+
+⏺ Poussée effectuée. Je crée la PR vers main puis je la merge.
+
+  Created PR #25, ran 1 shell command (ctrl+o to expand)
+⏺ La PR #25 est mergée. Vérifions l'état local final et le nettoyage de la
+  branche.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Terminé. Tout est propre.
+
+  Récapitulatif :
+  - Commit e7973b6 — remplacement du schéma ASCII par l'image
+  docs/diagrams/architecture-praxedo-upload.png.
+  - Push sur la branche task/readme-architecture-diagram.
+  - PR #25 créée vers main.
+  - Merge effectué (commit 31dadbb), branche distante + locale supprimées.
+  - De retour sur main, à jour avec origin/main.
+
+  Deux remarques :
+  - J'ai ciblé main car il n'existe aucune branche develop (ni locale ni
+  distante) et les PR récentes fusionnent déjà directement dans main. Si tu veux
+  réintroduire un vrai flux develop, dis-le-moi.
+  - Le fichier de dump de session à la racine
+  (2026-07-16-...-local-command-caveat...txt) n'a pas été commité — il n'est pas
+  couvert par le .gitignore (le motif ne matche que *-this-session-*.txt).
+  Veux-tu que j'ajoute *-local-command-caveat*.txt au .gitignore, ou que je
+  supprime ce fichier ?
+
+✻ Crunched for 2m 35s
