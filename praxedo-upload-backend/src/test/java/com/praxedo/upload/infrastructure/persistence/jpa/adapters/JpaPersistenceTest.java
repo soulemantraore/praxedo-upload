@@ -46,6 +46,10 @@ class JpaPersistenceTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        // Reproduit la condition de prod (pooler Supabase transaction) : prepared statements
+        // serveur desactives. Sans cela, pgjdbc infere le type des parametres cote serveur et
+        // masque le bug lower(bytea) sur la recherche a parametre null (voir application-gcp.yml).
+        registry.add("spring.datasource.hikari.data-source-properties.prepareThreshold", () -> "0");
     }
 
     @Autowired
@@ -102,6 +106,17 @@ class JpaPersistenceTest {
         assertThat(page.items()).hasSize(1);
         assertThat(page.items().get(0).filename()).isEqualTo("rapport-intervention.pdf");
         assertThat(page.totalElements()).isEqualTo(1);
+    }
+
+    @Test
+    void search_without_query_returns_all_owner_files() {
+        // Cas du dashboard : liste sans terme de recherche (q null). Le parametre null ne doit pas
+        // casser le type du lower(...) cote PostgreSQL (bug lower(bytea) sans prepared statement serveur).
+        fileRepo.save(pending("rapport-intervention.pdf", null));
+        fileRepo.save(pending("photo.zip", null));
+        PageResult<FileRecord> page = fileRepo.search(FileQuery.of(owner, null, null, 0, 20));
+        assertThat(page.items()).hasSize(2);
+        assertThat(page.totalElements()).isEqualTo(2);
     }
 
     @Test
