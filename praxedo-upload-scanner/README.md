@@ -67,9 +67,13 @@ En production, l'accès GCS se fait via l'identité du service Cloud Run
 
 ## Déploiement (GCP Cloud Run)
 
-Voir `deploy/` (manifeste Knative + Makefile gcloud). Service **privé**
-(`ingress: internal`, pas de binding `allUsers`) ; seul le compte de service du
-worker backend reçoit `run.invoker`. Enchaînement : `make all` (crée le SA,
+Voir `deploy/` (manifeste Knative + Makefile gcloud). Service **privé** : pas de
+binding `allUsers`, seul le compte de service du worker backend reçoit
+`run.invoker`. L'`ingress` est `all` (et non `internal`) car le worker Cloud Run
+n'a pas de connecteur VPC : il appelle le scanner via son URL publique `run.app`.
+La confidentialité reste assurée par IAM/OIDC (`--no-allow-unauthenticated`), pas
+par l'ingress — sans jeton valide, toute requête est rejetée (403). Enchaînement :
+`make all` (crée le SA,
 build+push, deploy, IAM), puis `make url` pour récupérer l'URL à passer au
 worker (`SCANNER_URL`).
 

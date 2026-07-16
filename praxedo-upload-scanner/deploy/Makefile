@@ -99,7 +99,7 @@ deploy: ## Deploy the private scanner Cloud Run service (app + ClamAV sidecar).
 	gcloud run deploy $(SCANNER_SERVICE) \
 	  --region=$(REGION) --project=$(PROJECT_ID) \
 	  --service-account=$(SCANNER_SA) \
-	  --no-allow-unauthenticated --ingress=internal \
+	  --no-allow-unauthenticated --ingress=all \
 	  --min-instances=1 --max-instances=5 --no-cpu-throttling --timeout=550 \
 	  --labels=app=praxedo-upload,component=scanner \
 	  --container=app --image=$(IMAGE_URI) --port=8080 --cpu=1 --memory=512Mi \
