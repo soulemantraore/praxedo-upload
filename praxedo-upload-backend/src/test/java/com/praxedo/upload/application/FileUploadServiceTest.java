@@ -34,6 +34,13 @@ class FileUploadServiceTest {
     }
 
     @Test
+    void storage_key_prefixes_owner_and_file_segments() {
+        var result = service.registerUpload(owner, new RegisterUploadCommand("a.pdf", "application/pdf", 100L));
+        String key = repo.findByIdAndOwner(result.id(), owner).orElseThrow().storageKey();
+        assertThat(key).isEqualTo("client_" + owner + "/file_" + result.id() + "/a.pdf");
+    }
+
+    @Test
     void register_batch_shares_one_batch_id() {
         var result = service.registerBatch(owner, new RegisterBatchCommand(List.of(
             new RegisterUploadCommand("a.pdf", "application/pdf", 100L),
