@@ -1,6 +1,6 @@
 # Infra — outillage de déploiement GCP (PR #26 `task/infra-tooling`, backend)
 
-Outillage gcloud + Makefile uniquement — **pas de Terraform** (décision D11). **Exécuté sur le projet `praxedo-upload-test`** (2026-07-15) : le service **UI est déployé et en ligne** (`https://praxedo-ui-7nj4c3y7jq-ew.a.run.app`) via `ui-deploy.yml`. Backend/scanner : infra partielle (SA runtime + WIF créés ; bucket/pubsub/secrets/DB restant à vérifier avant leur premier déploiement réussi). Voir la section **CI/CD — auth WIF** ci-dessous pour l'identité de déploiement.
+Outillage gcloud + Makefile uniquement — **pas de Terraform** (décision D11). **✅ Déploiement complet réussi et validé bout-en-bout sur `praxedo-upload-test` (2026-07-15)** : les **4 services** api / worker / scanner / ui sont en ligne et le pipeline upload→scan→verdict fonctionne (test **EICAR → `INFECTED`**, fichier infecté → **403** au download). Détail des écueils rencontrés et de leurs correctifs dans la section **Déploiement réel — pièges rencontrés (2026-07-15)** plus bas (PR #12 backend, PR #14 scanner). Voir aussi **CI/CD — auth WIF** pour l'identité de déploiement.
 
 ## Topologie cible (Cloud Run) — 3 services (depuis D15, scanner externalisé)
 - **`api`** (public, `X-API-Key` vérifié dans l'app) : sert `/api/**`. **Mono-conteneur** (app seul ; DB Supabase en TLS direct depuis D17 → plus de sidecar).
@@ -57,6 +57,18 @@ Le déploiement GitHub Actions s'authentifie à GCP par **Workload Identity Fede
 ## Fichiers .env.example
 - Backend : `.env.example` (PR #26) — SPRING_PROFILES_ACTIVE, STORAGE_LOCAL_DIR/PUBLIC_BASE_URL (local), GCS_BUCKET/DB_*/GCP_PROJECT_ID/PUBSUB_SCAN_TOPIC/GOOGLE_APPLICATION_CREDENTIALS (gcp). **Depuis D15** : `CLAMAV_*` remplacés par `SCANNER_URL`/`SCANNER_AUDIENCE`/`SCANNER_OIDC_ENABLED`. `.env` gitignoré.
 - Frontend : `.env.example` préexistant (jalon 4), `.env` déjà gitignoré.
+
+## Déploiement réel — pièges rencontrés et correctifs (2026-07-15)
+Premier déploiement complet sur `praxedo-upload-test`. Ordre qui marche : **infra une fois par un owner** (SA + bucket + pubsub + `iam` + secret) → **scanner** `make all` → **backend** `make deploy` (+ `pubsub` pour la notif GCS) → `--ingress=all` sur le scanner. Écueils, tous corrigés :
+- **Secret Manager — `Permission denied on secret`** : les SA runtime (api/worker) doivent avoir `roles/secretmanager.secretAccessor` sur `praxedo-db-password`. Posé par `make iam` (dans `make infra`), **pas** par `make deploy`. Le `DEPLOY_SA` du CI n'a **pas** le droit d'écrire la policy IAM d'un secret (par design) → provisioning one-shot par un owner. (`deploy/README.md` §Dépannage, PR #12)
+- **Flyway sur Supabase — `Found non-empty schema(s) "public" but no schema history table`** : Supabase pré-remplit `public` → Flyway refuse de migrer. Fix : `spring.flyway.baseline-on-migrate=true` + `baseline-version=0` (profil `gcp`) → baseline à 0 **puis** applique V1 (le défaut baseline-version=1 SAUTERAIT V1, laissant l'app sans tables vu `ddl-auto:none`). **1ʳᵉ migration** : préférer le **session pooler `:5432`** (le transaction pooler `:6543` casse les locks de session Flyway). (PR #12)
+- **Pooler Supabase — `FATAL: (ENOIDENTIFIER) no tenant identifier`** : `DB_USER` doit être `postgres.<project-ref>` (ici `postgres.tmimrnpsbduweomeewyj`), pas `postgres` nu — le pooler (`:5432` **et** `:6543`) route les tenants par ce suffixe. Garde-fou `check-db-user` (prérequis `deploy-api`/`deploy-worker`). Variable GitHub `DB_USER` déjà correcte. (PR #12)
+- **Image scanner arm64** : `docker build` local sur Apple Silicon → arm64, refusé par Cloud Run (`manifest ... must support amd64/linux`). Fix : `docker buildx build --platform linux/amd64 --provenance=false --push` (amd64 en local via QEMU + CI amd64, manifest unique). Défaut `BUCKET` du Makefile scanner était `$(PROJECT_ID)-praxedo-files` (inexistant) → corrigé `praxedo-files`. (PR #14)
+- **Agent de service GCS créé paresseusement** : `service-<num>@gs-project-accounts…` n'existe qu'après une 1ʳᵉ opération qui le déclenche → `make pubsub` échoue (`does not exist`). Forcer : `gcloud storage service-agent --project=…` puis relancer.
+- **Scanner `ingress=internal` casse worker→scanner** : appel Cloud Run→Cloud Run via l'URL `*.run.app` = trafic **externe** → **403** malgré `run.invoker`. Repassé en `--ingress=all` (scanner reste privé : `run.invoker` + OIDC = seul gardien). Alternative propre prod : Direct VPC egress sur le worker.
+- **Pas d'endpoint d'admin pour créer une clé API en `gcp`** : `ApiKeyService.createClient()` n'est appelé qu'au seed du profil `local`. Pour tester/exploiter : insérer une ligne `api_client` (`api_key_hash` = `base64(sha256(rawKey))`). **Gap produit** à combler (endpoint d'admin) pour un vrai livrable.
+
+**Validation e2e** : `POST /api/files` (URL signée V4) → `PUT` GCS → notif `OBJECT_FINALIZE` → Pub/Sub → worker → scanner (ClamAV ~355k sigs) → verdict en base, ~3 s. EICAR → `INFECTED` (`Eicar-Test-Signature`) ; `GET /content` sur infecté → **403** (seul `CLEAN` téléchargeable).
 
 ## Doc d'architecture
 `praxedo-upload-backend/docs/architecture.html` (PR #27) : schéma visuel autonome (hexagonal, cycle de vie, topologie déploiement, choix). Rendu vérifié au navigateur.
