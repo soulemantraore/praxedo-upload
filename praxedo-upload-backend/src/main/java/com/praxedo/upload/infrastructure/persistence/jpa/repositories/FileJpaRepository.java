@@ -28,9 +28,12 @@ public interface FileJpaRepository extends JpaRepository<FileEntity, UUID> {
 
     long countByOwnerIdAndStatus(UUID ownerId, FileStatus status);
 
+    // cast(:q as string) type explicitement le parametre : sans prepared statement serveur (pooler
+    // transaction), PostgreSQL inferait sinon un bytea pour un :q null -> "function lower(bytea)
+    // does not exist" (SQLSTATE 42883). Le cast garantit un type texte quel que soit le mode driver.
     @Query("select f from FileEntity f where f.ownerId = :ownerId "
         + "and (:status is null or f.status = :status) "
-        + "and (:q is null or lower(f.filename) like lower(concat('%', :q, '%')))")
+        + "and (:q is null or lower(f.filename) like lower(concat('%', cast(:q as string), '%')))")
     Page<FileEntity> search(@Param("ownerId") UUID ownerId,
                             @Param("status") FileStatus status,
                             @Param("q") String q,
