@@ -1,11 +1,14 @@
 package com.praxedo.upload.application;
 
 import com.praxedo.upload.application.dto.UploadCommands.*;
+import com.praxedo.upload.domain.exceptions.FileTooLargeException;
 import com.praxedo.upload.domain.models.FileRecord;
 import com.praxedo.upload.domain.port.FileMetadataRepository;
 import com.praxedo.upload.domain.port.FileStorage;
 import com.praxedo.upload.domain.port.IdGenerator;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.unit.DataSize;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -20,12 +23,15 @@ public class FileUploadService {
     private final FileStorage storage;
     private final IdGenerator ids;
     private final Clock clock;
+    private final long maxUploadBytes;
 
-    public FileUploadService(FileMetadataRepository repository, FileStorage storage, IdGenerator ids, Clock clock) {
+    public FileUploadService(FileMetadataRepository repository, FileStorage storage, IdGenerator ids, Clock clock,
+                             @Value("${storage.max-upload-size}") DataSize maxUploadSize) {
         this.repository = repository;
         this.storage = storage;
         this.ids = ids;
         this.clock = clock;
+        this.maxUploadBytes = maxUploadSize.toBytes();
     }
 
     public UploadRegistration registerUpload(UUID ownerId, RegisterUploadCommand cmd) {
@@ -42,6 +48,9 @@ public class FileUploadService {
     }
 
     private UploadRegistration register(UUID ownerId, RegisterUploadCommand cmd, UUID batchId) {
+        if (cmd.sizeBytes() > maxUploadBytes) {
+            throw new FileTooLargeException(cmd.sizeBytes(), maxUploadBytes);
+        }
         UUID id = ids.newId();
         Instant now = clock.instant();
         String storageKey = "client_" + ownerId + "/file_" + id + "/" + cmd.filename();

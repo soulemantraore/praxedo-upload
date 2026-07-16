@@ -1,11 +1,13 @@
 package com.praxedo.upload.application;
 
 import com.praxedo.upload.application.dto.UploadCommands.*;
+import com.praxedo.upload.domain.exceptions.FileTooLargeException;
 import com.praxedo.upload.domain.models.FileStatus;
 import com.praxedo.upload.domain.port.IdGenerator;
 import com.praxedo.upload.infrastructure.persistence.inmemory.InMemoryFileMetadataRepository;
 import com.praxedo.upload.infrastructure.storage.local.LocalFileStorage;
 import org.junit.jupiter.api.Test;
+import org.springframework.util.unit.DataSize;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -14,6 +16,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FileUploadServiceTest {
 
@@ -22,7 +25,7 @@ class FileUploadServiceTest {
     private final Clock clock = Clock.fixed(Instant.parse("2026-07-10T10:00:00Z"), ZoneOffset.UTC);
     private int seq = 0;
     private final IdGenerator ids = () -> UUID.nameUUIDFromBytes(("id" + seq++).getBytes());
-    private final FileUploadService service = new FileUploadService(repo, storage, ids, clock);
+    private final FileUploadService service = new FileUploadService(repo, storage, ids, clock, DataSize.ofGigabytes(1));
     private final UUID owner = UUID.randomUUID();
 
     @Test
@@ -49,5 +52,21 @@ class FileUploadServiceTest {
         UUID batchId = result.batchId();
         result.items().forEach(i ->
             assertThat(repo.findById(i.id()).orElseThrow().batchId()).isEqualTo(batchId));
+    }
+
+    @Test
+    void rejects_upload_over_max_size() {
+        var small = new FileUploadService(repo, storage, ids, clock, DataSize.ofBytes(100));
+        assertThatThrownBy(() -> small.registerUpload(owner,
+                new RegisterUploadCommand("big.bin", "application/octet-stream", 101L)))
+            .isInstanceOf(FileTooLargeException.class);
+    }
+
+    @Test
+    void accepts_upload_at_exact_max_size() {
+        var small = new FileUploadService(repo, storage, ids, clock, DataSize.ofBytes(100));
+        var result = small.registerUpload(owner,
+                new RegisterUploadCommand("ok.bin", "application/octet-stream", 100L));
+        assertThat(result.status()).isEqualTo(FileStatus.PENDING);
     }
 }
