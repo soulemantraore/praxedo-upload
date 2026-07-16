@@ -61,7 +61,7 @@ jobs:
 
       - name: Build image and deploy scanner (with ClamAV sidecar)
         run: |
-          make build-push deploy \
+          make build-push build-push-clamav deploy \
             PROJECT_ID="${{ vars.GCP_PROJECT_ID }}" \
             REGION="${{ vars.GCP_REGION }}" \
             IMAGE_TAG="${{ github.sha }}"

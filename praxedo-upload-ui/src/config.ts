@@ -18,3 +18,7 @@ export function readConfig(env: ImportMetaEnv): AppConfig {
 }
 
 export const config = readConfig(import.meta.env);
+
+// Plafond d'upload en octets. DOIT rester aligne avec storage.max-upload-size du backend
+// (Spring DataSize "1GB" = 1 073 741 824 octets). Affiche "1 Go" cote UI.
+export const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;

@@ -75,4 +75,13 @@ class FilesControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.url").exists());
     }
+
+    @Test
+    void register_upload_over_max_size_returns_413() throws Exception {
+        String body = "{\"filename\":\"big.bin\",\"contentType\":\"application/octet-stream\",\"size\":2000000000}";
+        mvc.perform(post("/api/files").header("X-API-Key", key)
+                .contentType("application/json").content(body))
+            .andExpect(status().isPayloadTooLarge())
+            .andExpect(jsonPath("$.error").exists());
+    }
 }

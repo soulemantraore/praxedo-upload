@@ -96,6 +96,13 @@ une fois (`praxedo-upload-scanner/deploy/Makefile`).
   → tient la charge et les fichiers de tailles très variables.
 - **URLs signées direct-to-GCS** : les octets ne transitent jamais par l'application (le port
   `FileStorage` cache ce détail ; l'adapter local est un proxy HTTP).
+- **Plafond d'upload : 1 Go** (`storage.max-upload-size`, surchargeable via `STORAGE_MAX_UPLOAD_SIZE`).
+  L'API rejette (413) toute taille déclarée supérieure ; le front pré-valide et l'affiche. La limite est
+  dictée par la **capacité du service de scan** (ClamAV) — le worker ne bufferise jamais le fichier (il ne
+  transmet que l'URI GCS) : la contrainte réelle est la directive `StreamMaxLength` de clamd et la RAM du
+  sidecar ClamAV (4 Gio). Pour l'augmenter, relever conjointement `storage.max-upload-size`, les directives
+  `StreamMaxLength`/`MaxFileSize`/`MaxScanSize` (image `deploy/clamav/Dockerfile` du scanner), la RAM du
+  sidecar `clamav`, et la constante `MAX_UPLOAD_BYTES` du front.
 - **Antivirus derrière un port** : en production `RemoteScannerClient` appelle le service scanner
   externe (ClamAV) via OIDC ; un `FakeAntivirusScanner` (EICAR) sert en local/test. Un adapter SaaS
   serait trivial à brancher.
@@ -108,6 +115,9 @@ une fois (`praxedo-upload-scanner/deploy/Makefile`).
 - Authentification humaine OAuth2/JWT en complément des clés API ; endpoint admin de gestion des clés.
 - Webhooks / push de fin de scan pour supprimer le polling côté UI.
 - Téléchargement direct depuis GCS via URL signée renvoyée au navigateur (décharge le backend des gros fichiers).
+- Enforcement dur du plafond d'upload au niveau du stockage : URL signée GCS bornée
+  (`X-Goog-Content-Length-Range`) pour refuser côté GCS un dépassement de la taille déclarée ; exposer la
+  limite via un endpoint `/config` pour une source unique côté front.
 - Durcissement : vérification applicative du jeton OIDC Pub/Sub, chiffrement au repos (CMEK), quotas/rate-limiting.
 - Dépendances UI : traiter les vulnérabilités `npm audit` (5 relevées au 2026-07-14) avant mise en production.
 

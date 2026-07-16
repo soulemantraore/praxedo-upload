@@ -13,6 +13,8 @@ spring:
 storage:
   local:
     base-dir: ${STORAGE_LOCAL_DIR:./data/uploads}
+  # Plafond d'upload (taille declaree). Doit rester <= StreamMaxLength du scanner ClamAV.
+  max-upload-size: ${STORAGE_MAX_UPLOAD_SIZE:1GB}
   upload-url-ttl: PT15M
   download-url-ttl: PT5M
   public-base-url: ${PUBLIC_BASE_URL:http://localhost:8080}

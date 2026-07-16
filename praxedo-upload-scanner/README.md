@@ -79,8 +79,9 @@ worker (`SCANNER_URL`).
 
 ## Piège connu
 
-- **Gros fichiers** : clamd limite la taille d'un flux INSTREAM
-  (`StreamMaxLength`, défaut 25M) et le scan (`MaxFileSize` / `MaxScanSize`).
-  Pour des fichiers plus gros, relever ces valeurs dans la configuration du
-  sidecar `clamav` (variables d'environnement de l'image officielle ou
-  `clamd.conf` monté), sinon clamd répond « INSTREAM size limit exceeded ».
+- **Gros fichiers** : clamd limite la taille d'un flux INSTREAM (`StreamMaxLength`) et le
+  scan (`MaxFileSize` / `MaxScanSize`). Le defaut de l'image officielle est 25M ; le sidecar
+  utilise ici une **image derivee** (`deploy/clamav/Dockerfile`) qui releve ces trois valeurs
+  a **1200M** (~1,2 Go), pour supporter le plafond applicatif de 1 Go. Pour aller au-dela :
+  relever ces valeurs dans le Dockerfile derive **et** la RAM du sidecar `clamav`
+  (`--memory` dans `deploy/Makefile`, 4Gi actuellement).
