@@ -1,5 +1,6 @@
 import { useRef, useState, type CSSProperties } from 'react';
 import { useUploadFiles, type UploadProgress } from '../api/hooks';
+import { MAX_UPLOAD_BYTES } from '../config';
 
 interface Props {
   onClose: () => void;
@@ -8,16 +9,21 @@ interface Props {
 
 export function UploadModal({ onClose, onUploaded }: Props) {
   const [dragOver, setDragOver] = useState(false);
+  const [rejected, setRejected] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const upload = useUploadFiles();
 
   const handleFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
-    const files = Array.from(list);
-    upload.mutate(files, {
+    const all = Array.from(list);
+    const tooBig = all.filter((f) => f.size > MAX_UPLOAD_BYTES);
+    const ok = all.filter((f) => f.size <= MAX_UPLOAD_BYTES);
+    setRejected(tooBig.map((f) => f.name));
+    if (ok.length === 0) return;
+    upload.mutate(ok, {
       onSuccess: (res) => {
         onUploaded(res);
-        if (res.errors.length === 0) onClose();
+        if (res.errors.length === 0 && tooBig.length === 0) onClose();
       },
     });
   };
@@ -157,9 +163,27 @@ export function UploadModal({ onClose, onUploaded }: Props) {
               onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }}
             />
             <div style={{ fontSize: 12, color: '#8A96A4', marginTop: 16 }}>
-              Tous formats · jusqu'à 2 Go par fichier · sélection multiple
+              Tous formats · jusqu'à 1 Go par fichier · sélection multiple
             </div>
           </div>
+
+          {rejected.length > 0 && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 16,
+                background: '#FBEBE9',
+                color: '#B23B30',
+                borderRadius: 10,
+                padding: '10px 14px',
+                fontSize: 12.5,
+                fontWeight: 600,
+                lineHeight: 1.5,
+              }}
+            >
+              {rejected.length} fichier(s) trop volumineux (max 1 Go) : {rejected.join(', ')}
+            </div>
+          )}
 
           {failed.length > 0 && (
             <div
