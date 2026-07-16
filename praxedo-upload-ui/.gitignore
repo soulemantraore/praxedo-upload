@@ -7,3 +7,8 @@ coverage
 .env.local
 .DS_Store
 *.log
+
+# Ce composant utilise npm (package-lock.json). On ignore les lockfiles
+# concurrents pour eviter deux sources de verite sur les dependances.
+pnpm-lock.yaml
+yarn.lock
