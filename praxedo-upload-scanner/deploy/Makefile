@@ -39,28 +39,29 @@ WORKER_SA        := $(WORKER_SA_NAME)@$(PROJECT_ID).iam.gserviceaccount.com
 # ---- GCS bucket the scanner reads from (must match the backend Makefile's BUCKET) ----
 BUCKET           ?= praxedo-files
 
-# ---- Sidecar image ----
-CLAMAV_IMAGE     ?= clamav/clamav-debian:latest
-
 # ---- Derived ----
 IMAGE_URI        := $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO)/$(IMAGE):$(IMAGE_TAG)
+# Sidecar ClamAV : image derivee avec clamd.conf aux limites relevees.
+CLAMAV_IMAGE_URI := $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(REPO)/praxedo-upload-clamav:$(IMAGE_TAG)
+CLAMAV_IMAGE     ?= $(CLAMAV_IMAGE_URI)
 
 DEPLOY_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 REPO_ROOT  := $(abspath $(DEPLOY_DIR)/..)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help config scanner-sa build-push deploy iam url all
+.PHONY: help config scanner-sa build-push build-push-clamav deploy iam url all
 
 help: ## Show this help.
 	@echo "praxedo-upload-scanner - GCP deployment targets:"
 	@echo ""
 	@echo "  scanner-sa    Create the scanner runtime service account"
 	@echo "  build-push    Build the image with Cloud Build and push to Artifact Registry"
+	@echo "  build-push-clamav  Build+push the derived ClamAV sidecar image (raised size limits)"
 	@echo "  deploy        Deploy the private scanner Cloud Run service (app + ClamAV sidecar)"
 	@echo "  iam           Grant the scanner read on the bucket + the worker run.invoker on the scanner"
 	@echo "  url           Print the deployed scanner URL"
-	@echo "  all           scanner-sa + build-push + deploy + iam"
+	@echo "  all           scanner-sa + build-push + build-push-clamav + deploy + iam"
 	@echo ""
 	@echo "Override variables, e.g.: make deploy PROJECT_ID=my-proj REGION=europe-west1"
 
@@ -88,6 +89,10 @@ build-push: ## Build the linux/amd64 image with Docker buildx and push to Artifa
 	# Docker must be authenticated to $(REGION)-docker.pkg.dev first, once:
 	#   gcloud auth configure-docker $(REGION)-docker.pkg.dev
 
+build-push-clamav: ## Build+push the derived ClamAV sidecar image (raised size limits).
+	docker buildx build --platform linux/amd64 --provenance=false \
+	  -t $(CLAMAV_IMAGE_URI) --push $(DEPLOY_DIR)/clamav
+
 # Two containers (app + ClamAV sidecar), so deploy imperatively with the
 # multi-container `gcloud run deploy --container ...` syntax. Service-level flags
 # come BEFORE the first --container; container-scoped flags follow their --container.
@@ -107,7 +112,7 @@ deploy: ## Deploy the private scanner Cloud Run service (app + ClamAV sidecar).
 	    --set-env-vars=CLAMAV_HOST=127.0.0.1,CLAMAV_PORT=3310 \
 	    --startup-probe=httpGet.path=/health,httpGet.port=8080,periodSeconds=15,failureThreshold=40 \
 	    --liveness-probe=httpGet.path=/health,httpGet.port=8080,periodSeconds=30 \
-	  --container=clamav --image=$(CLAMAV_IMAGE) --cpu=2 --memory=2Gi \
+	  --container=clamav --image=$(CLAMAV_IMAGE) --cpu=2 --memory=4Gi \
 	    --startup-probe=tcpSocket.port=3310,periodSeconds=15,failureThreshold=40
 
 iam: ## Bucket read-only for the scanner + run.invoker for the worker on this scanner.
@@ -125,8 +130,9 @@ url: ## Print the deployed scanner URL (use as SCANNER_URL for the worker).
 	@gcloud run services describe $(SCANNER_SERVICE) \
 	  --region=$(REGION) --project=$(PROJECT_ID) --format='value(status.url)'
 
-all: ## scanner-sa + build-push + deploy + iam.
+all: ## scanner-sa + build-push + build-push-clamav + deploy + iam.
 	$(MAKE) scanner-sa
 	$(MAKE) build-push
+	$(MAKE) build-push-clamav
 	$(MAKE) deploy
 	$(MAKE) iam
