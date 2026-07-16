@@ -44,7 +44,7 @@ public class FileUploadService {
     private UploadRegistration register(UUID ownerId, RegisterUploadCommand cmd, UUID batchId) {
         UUID id = ids.newId();
         Instant now = clock.instant();
-        String storageKey = ownerId + "/" + id + "/" + cmd.filename();
+        String storageKey = "client_" + ownerId + "/file_" + id + "/" + cmd.filename();
         FileRecord record = FileRecord.pending(id, ownerId, batchId, cmd.filename(),
             cmd.contentType(), cmd.sizeBytes(), storageKey, now);
         repository.save(record);
