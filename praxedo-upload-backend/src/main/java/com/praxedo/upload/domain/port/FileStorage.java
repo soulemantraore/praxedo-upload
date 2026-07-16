@@ -16,7 +16,11 @@ public interface FileStorage {
 
     UploadTarget createUploadTarget(String storageKey, String contentType, long sizeBytes);
 
-    URI createDownloadUrl(String storageKey, Duration ttl);
+    /**
+     * URL de telechargement. {@code downloadFilename} sert a forcer un telechargement avec ce nom
+     * (Content-Disposition: attachment) cote stockage, indispensable en navigation cross-origin.
+     */
+    URI createDownloadUrl(String storageKey, String downloadFilename, Duration ttl);
 
     /** Lecture des octets (utilisee par le worker de scan). */
     InputStream read(String storageKey);

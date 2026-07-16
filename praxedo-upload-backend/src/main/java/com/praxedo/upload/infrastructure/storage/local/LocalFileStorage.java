@@ -74,16 +74,19 @@ public class LocalFileStorage implements FileStorage {
 
     @Override
     public UploadTarget createUploadTarget(String key, String contentType, long size) {
-        return new UploadTarget(proxy("/api/_local/upload", key), Instant.now().plus(Duration.ofMinutes(15)));
+        return new UploadTarget(proxy("/api/_local/upload", key, null), Instant.now().plus(Duration.ofMinutes(15)));
     }
 
     @Override
-    public URI createDownloadUrl(String key, Duration ttl) {
-        return proxy("/api/_local/download", key);
+    public URI createDownloadUrl(String key, String downloadFilename, Duration ttl) {
+        return proxy("/api/_local/download", key, downloadFilename);
     }
 
-    private URI proxy(String path, String key) {
-        String enc = URLEncoder.encode(key, StandardCharsets.UTF_8);
-        return URI.create(publicBaseUrl + path + "?key=" + enc);
+    private URI proxy(String path, String key, String filename) {
+        String url = publicBaseUrl + path + "?key=" + URLEncoder.encode(key, StandardCharsets.UTF_8);
+        if (filename != null) {
+            url += "&filename=" + URLEncoder.encode(filename, StandardCharsets.UTF_8);
+        }
+        return URI.create(url);
     }
 }

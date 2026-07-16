@@ -34,9 +34,14 @@ public class LocalStorageController {
     }
 
     @GetMapping("/download")
-    public ResponseEntity<InputStreamResource> download(@RequestParam String key) {
-        return ResponseEntity.ok()
-            .contentType(MediaType.APPLICATION_OCTET_STREAM)
-            .body(new InputStreamResource(storage.read(key)));
+    public ResponseEntity<InputStreamResource> download(@RequestParam String key,
+                                                        @RequestParam(required = false) String filename) {
+        ResponseEntity.BodyBuilder builder = ResponseEntity.ok().contentType(MediaType.APPLICATION_OCTET_STREAM);
+        if (filename != null) {
+            // Simule le response-content-disposition des URLs signees GCS (telechargement, pas affichage).
+            builder.header("Content-Disposition",
+                "attachment; filename=\"" + filename.replaceAll("[\"\\\\\\r\\n]", "_") + "\"");
+        }
+        return builder.body(new InputStreamResource(storage.read(key)));
     }
 }

@@ -26,4 +26,9 @@ public final class FileViews {
 
     public record BatchView(UUID batchId, List<FileView> items, StatusCounts summary) {
     }
+
+    /** URL signee de telechargement, renvoyee en JSON pour que le navigateur navigue directement
+     *  vers le stockage (pas de proxy des octets, pas de preflight CORS ni de fuite de X-API-Key). */
+    public record DownloadView(String url) {
+    }
 }

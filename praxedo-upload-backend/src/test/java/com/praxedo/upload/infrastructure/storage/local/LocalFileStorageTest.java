@@ -27,7 +27,7 @@ class LocalFileStorageTest {
         LocalFileStorage storage = new LocalFileStorage("/tmp/praxedo-local-test", "http://localhost:8080");
         FileStorage.UploadTarget t = storage.createUploadTarget("owner/a.txt", "text/plain", 5);
         assertThat(t.url().toString()).contains("/api/_local/upload");
-        assertThat(storage.createDownloadUrl("owner/a.txt", Duration.ofMinutes(5)).toString())
+        assertThat(storage.createDownloadUrl("owner/a.txt", "a.txt", Duration.ofMinutes(5)).toString())
             .contains("/api/_local/download");
     }
 }

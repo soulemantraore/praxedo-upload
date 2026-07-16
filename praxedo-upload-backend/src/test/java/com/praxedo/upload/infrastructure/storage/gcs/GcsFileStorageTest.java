@@ -43,10 +43,12 @@ class GcsFileStorageTest {
     @Test
     void create_download_url_signs_a_get_url() throws Exception {
         java.net.URL signed = URI.create("https://storage.googleapis.com/my-bucket/k?sig=xyz").toURL();
+        // 3 options : httpMethod(GET), withV4Signature(), withQueryParams(response-content-disposition)
         when(storage.signUrl(any(BlobInfo.class), eq(300L), eq(TimeUnit.SECONDS),
-            any(Storage.SignUrlOption.class), any(Storage.SignUrlOption.class))).thenReturn(signed);
+            any(Storage.SignUrlOption.class), any(Storage.SignUrlOption.class), any(Storage.SignUrlOption.class)))
+            .thenReturn(signed);
 
-        URI url = gcs.createDownloadUrl("owner/k.txt", Duration.ofMinutes(5));
+        URI url = gcs.createDownloadUrl("owner/k.txt", "k.txt", Duration.ofMinutes(5));
 
         assertThat(url.toString()).contains("my-bucket");
     }

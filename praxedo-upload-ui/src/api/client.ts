@@ -86,23 +86,20 @@ export function createFileApi(config: AppConfig, fetchImpl: typeof fetch = fetch
       request<void>(`/api/files/${encodeURIComponent(id)}/rescan`, { method: 'POST' }),
 
     downloadFile: async (id, filename) => {
-      // GET /content -> 302 URL signee ; en dev/mock le fetch suit la redirection.
-      // Compromis demo : on recupere les octets puis on declenche l'enregistrement.
-      // Evolution : le backend renvoie l'URL signee en JSON pour que le navigateur
-      // telecharge directement depuis GCS (offload des octets).
-      const res = await fetchImpl(`${base}/api/files/${encodeURIComponent(id)}/content`, {
-        headers: authHeaders(),
-      });
-      if (!res.ok) throw new ApiError(res.status, `Download failed (${res.status})`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      // Le backend renvoie l'URL signee en JSON ; on navigue directement vers le stockage.
+      // Les octets ne transitent pas par le front, aucun X-API-Key n'est transmis a GCS,
+      // et il n'y a donc pas de preflight CORS. Le telechargement (nom + piece jointe) est
+      // garanti par le response-content-disposition signe cote backend.
+      const { url } = await request<{ url: string }>(
+        `/api/files/${encodeURIComponent(id)}/content`,
+      );
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
+      a.rel = 'noopener';
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
     },
   };
 }

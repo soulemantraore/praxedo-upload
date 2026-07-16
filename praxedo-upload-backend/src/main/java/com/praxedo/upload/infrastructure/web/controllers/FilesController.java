@@ -3,6 +3,7 @@ package com.praxedo.upload.infrastructure.web.controllers;
 import com.praxedo.upload.application.FileDownloadService;
 import com.praxedo.upload.application.FileQueryService;
 import com.praxedo.upload.application.FileUploadService;
+import com.praxedo.upload.application.dto.FileViews.DownloadView;
 import com.praxedo.upload.application.dto.FileViews.FileView;
 import com.praxedo.upload.application.dto.UploadCommands.RegisterUploadCommand;
 import com.praxedo.upload.application.dto.UploadCommands.UploadRegistration;
@@ -73,9 +74,11 @@ public class FilesController {
     }
 
     @GetMapping("/{id}/content")
-    public ResponseEntity<Void> download(@AuthenticationPrincipal AuthenticatedClient client, @PathVariable UUID id) {
+    public DownloadView download(@AuthenticationPrincipal AuthenticatedClient client, @PathVariable UUID id) {
+        // On renvoie l'URL signee en JSON (au lieu d'un 302) : l'UI navigue directement vers le stockage,
+        // sans transporter X-API-Key vers GCS ni declencher de preflight CORS.
         URI url = downloadService.requestDownload(client.ownerId(), id);
-        return ResponseEntity.status(HttpStatus.FOUND).location(url).build();
+        return new DownloadView(url.toString());
     }
 
     @PostMapping("/{id}/rescan")
