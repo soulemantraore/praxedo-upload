@@ -5,6 +5,7 @@ const now = () => new Date('2026-07-11T09:00:00Z').toISOString();
 interface StoreFile extends FileView {
   revealAtPoll: number; // le scan se resout au polling >= cette valeur
   uploaded: boolean;
+  seq: number; // ordre d'insertion : tie-breaker de tri quand createdAt est egal
 }
 
 let files: StoreFile[] = [];
@@ -36,6 +37,7 @@ function addSeed(s: Partial<StoreFile>): void {
     scannedAt: s.scannedAt ?? null,
     revealAtPoll: s.revealAtPoll ?? 0,
     uploaded: s.uploaded ?? true,
+    seq,
   });
 }
 
@@ -54,6 +56,7 @@ export function register(input: { filename: string; contentType: string; size: n
     scannedAt: null,
     revealAtPoll: Number.MAX_SAFE_INTEGER,
     uploaded: false,
+    seq,
   });
   // Reflete UploadCommands.UploadRegistration : pas de `filename` renvoye.
   return {
@@ -105,6 +108,13 @@ export function listFiles(params: URLSearchParams) {
   let filtered = files.filter((f) => f.status !== 'EXPIRED');
   if (q) filtered = filtered.filter((f) => f.filename.toLowerCase().includes(q));
   if (status) filtered = filtered.filter((f) => f.status === status);
+  // Comme le vrai backend (tri createdAt DESC) : les fichiers les plus recents
+  // en tete, donc en premieres pages. Tie-breaker sur `seq` (ordre d'insertion)
+  // car le mock fige `now()` : plusieurs uploads partagent le meme createdAt et
+  // le dernier enregistre doit apparaitre en premier.
+  filtered = [...filtered].sort(
+    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.seq - a.seq,
+  );
   const totalElements = filtered.length;
   const items = filtered.slice(page * size, page * size + size).map(toView);
   // Reflete domain/file/PageResult : { items, page, size, totalElements }.
