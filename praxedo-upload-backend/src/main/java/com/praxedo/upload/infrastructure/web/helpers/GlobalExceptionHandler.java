@@ -2,6 +2,7 @@ package com.praxedo.upload.infrastructure.web.helpers;
 
 import com.praxedo.upload.domain.exceptions.DownloadNotAllowedException;
 import com.praxedo.upload.domain.exceptions.FileNotFoundException;
+import com.praxedo.upload.domain.exceptions.FileTooLargeException;
 import com.praxedo.upload.domain.exceptions.IllegalFileTransitionException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,5 +28,10 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalFileTransitionException.class)
     public ResponseEntity<Map<String, String>> conflict(IllegalFileTransitionException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(FileTooLargeException.class)
+    public ResponseEntity<Map<String, String>> tooLarge(FileTooLargeException e) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(Map.of("error", e.getMessage()));
     }
 }
