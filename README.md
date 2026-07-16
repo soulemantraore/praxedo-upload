@@ -19,25 +19,7 @@ Monorepo regroupant les trois composants du système, **déployés séparément*
 Le scan vit dans un **service séparé** (`praxedo-upload-scanner`) que le backend **appelle** ;
 le scanner ne touche jamais la base — seul le backend écrit le verdict (ADR **D15**).
 
-```
-                 ┌─────────────────┐        X-API-Key
-   navigateur ──▶│ praxedo-upload-ui│──────────────────────┐
-                 └─────────────────┘                       ▼
-                                              ┌───────────────────────────┐
-   upload direct (URL signée)  ──────────────▶│      GCS (bucket)         │
-                                              └───────────────────────────┘
-                                                     │ object finalize
-                                                     ▼
-                                              Pub/Sub ──push──▶ /internal/scan-events
-                                                                      │ (scan-worker)
-                 ┌──────────────────────────┐   POST /scan {gsUri}    ▼
-                 │ praxedo-upload-backend    │◀───────────────┐  ┌──────────────────┐
-                 │ (domaine + ports/adapters)│  verdict        └─▶│ praxedo-upload-  │
-                 │  écrit le verdict (Cloud  │◀──────────────────│ scanner + ClamAV │
-                 │  SQL)                     │                    └──────────────────┘
-                 └──────────────────────────┘
-   GET /content ──▶ URL signée de download **uniquement si CLEAN**, sinon 403
-```
+![Architecture praxedo-upload : upload avec scan antiviral asynchrone (URLs signées direct-to-GCS, événement Pub/Sub vers le backend, scan ClamAV découplé) et téléchargement autorisé uniquement si le statut est CLEAN](docs/diagrams/architecture-praxedo-upload.png)
 
 **Cycle de vie d'un fichier** :
 
