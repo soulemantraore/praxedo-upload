@@ -1,0 +1,1326 @@
+ ▐▛███▜▌   Claude Code v2.1.207
+▝▜█████▛▘  Opus 4.8 · Claude Max
+  ▘▘ ▝▝    ~/Documents/praxedo-app
+
+
+❯ /clear                                                                        
+
+❯ instead of render-api and render-worker from knative, do gcloud cmds instead  
+
+⏺ Je vais d'abord explorer la configuration de déploiement actuelle pour
+  comprendre ce que sont render-api et render-worker, et comment le knative est
+  utilisé.
+
+  Read 3 files, ran 1 shell command (ctrl+o to expand)
+
+⏺ Je comprends la structure. Regardons le scanner (qui pourrait déjà utiliser
+  gcloud run deploy) et le README pour caler le style attendu.
+
+  Read 2 files (ctrl+o to expand)
+
+⏺ Regardons le README de déploiement backend et le workflow CI, pour couvrir
+  toutes les références aux cibles render-* et aux fichiers YAML.
+
+  Listed 1 directory (ctrl+o to expand)
+
+⏺ J'ai tout le contexte. Point important : la mémoire .claude/memory/infra.md
+  disait que l'api devait rester en YAML Knative parce qu'elle embarquait un 
+  sidecar Cloud SQL Auth Proxy (donc multi-conteneurs). Or ce n'est plus vrai :
+  depuis la migration vers Supabase en TLS direct, api et worker sont 
+  mono-conteneur (un seul container app dans les deux YAML). Le verrou
+  historique a donc sauté — gcloud run deploy mono-conteneur marche parfaitement
+  pour les deux.
+
+  Voici ce que je compte faire (backend deploy/Makefile) :
+
+  deploy-api → remplacer render-api + gcloud run services replace par :
+  gcloud run deploy $(API_SERVICE) --image=$(IMAGE_URI) --region --project \
+    --service-account=$(API_SA) --port=8080 --cpu=1 --memory=512Mi \
+    --min-instances=0 --max-instances=10 --timeout=60 --ingress=all \
+    --labels=app=praxedo-upload,component=api \
+    --allow-unauthenticated \
+    --set-env-vars=SPRING_PROFILES_ACTIVE=gcp,SERVER_PORT=8080,GCP_PROJECT_ID=..
+  .,GCS_BUCKET=...,PUBSUB_SCAN_TOPIC=...,DB_URL=...,DB_USER=... \
+    --set-secrets=DB_PASSWORD=$(DB_SECRET_NAME):latest
+  --allow-unauthenticated remplace le binding allUsers séparé (je le retire
+  donc).
+
+  deploy-worker → idem, en gardant le garde-fou SCANNER_URL (échoue si le
+  scanner n'est pas déployé), avec --no-allow-unauthenticated (reste privé, seul
+  le push SA obtient run.invoker via pubsub-push), --memory=1Gi 
+  --max-instances=5 --timeout=600, et les env SCANNER_URL/AUDIENCE/OIDC.
+
+  Je supprime aussi les cibles render-api/render-worker, mets à jour .PHONY + le
+  help, et le README backend.
+
+  Note : les startupProbe/livenessProbe TCP explicites du YAML disparaissent —
+  Cloud Run applique de toute façon une sonde de démarrage TCP par défaut sur le
+  port. Comportement quasi identique.
+
+  Deux décisions avant que je code :
+
+⏺ User answered Claude's questions:
+  ⎿  · Périmètre de la conversion vers gcloud run deploy ? → api + worker + 
+     scanner
+     · Que faire des templates YAML devenus inutiles (api-service.yaml, 
+     worker-service.yaml) ? → Supprimer
+
+⏺ Bien reçu : je convertis les trois services (api, worker, scanner) et je
+  supprime les templates YAML.
+
+  Le scanner est le point délicat (2 conteneurs : app + sidecar clamav, avec
+  dépendance de conteneur et sonde de démarrage TCP sur clamd). Avant d'écrire,
+  je vérifie exactement quels flags ta version de gcloud expose
+  (multi-conteneurs, --depends-on, sondes) pour ne pas produire des commandes
+  qui échouent.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ gcloud 539 supporte tout ce qu'il faut : --container, --depends-on,
+  --startup-probe, --liveness-probe, --no-cpu-throttling. Je vérifie la syntaxe
+  exacte de ces trois-là (probes + depends-on) pour le scanner.
+
+  Ran 6 shell commands (ctrl+o to expand)
+
+⏺ Parfait, gcloud 539 supporte les sondes (tcpSocket.port, httpGet.path/port) et
+  --depends-on. Je peux donc traduire fidèlement les trois services, sidecar
+  ClamAV et dépendance de conteneur compris. Je vérifie les derniers fichiers
+  impactés (workflows CI, READMEs) avant d'éditer.
+
+  Read 1 file, listed 1 directory (ctrl+o to expand)
+
+⏺ J'ai tout ce qu'il faut. Deux derniers fichiers à cadrer : la mémoire infra.md
+  (qui contient le raisonnement périmé « api = multi-conteneurs → Knative
+  obligatoire ») et le comment du workflow scanner.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+⏺ Tout est clair. Je fais les modifications. Commençons par le Makefile backend
+  (cibles deploy-api/deploy-worker, .PHONY, aide).
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 1 line, removed 1 line
+      91  .DEFAULT_GOAL := help
+      92  
+      93  .PHONY: help enable-apis bootstrap service-accounts secrets sql
+           bucket pubsub iam \
+      94 -        infra build-push render-api render-worker deploy-api de
+         -ploy-worker \                                                  
+      94 +        infra build-push deploy-api deploy-worker \            
+      95          pubsub-push deploy config cicd-setup cicd-values cicd-g
+          ithub
+      96  
+      97  # -------------------------------------------------------------
+          --------
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 2 lines, removed 2 lines
+      102    @echo "  bootstrap        Create the Artifact Registry Docke
+           r repository"
+      103    @echo "  infra            GCS(+CORS+notification) + Pub/Sub 
+           + SAs + IAM + secrets (DB = Supabase, externe)"
+      104    @echo "  build-push       Build the image with Cloud Build a
+           nd push to Artifact Registry"
+      105 -  @echo "  deploy-api       Render + apply the api Cloud Run s
+          -ervice"                                                       
+      106 -  @echo "  deploy-worker    Render + apply the worker Cloud Ru
+          -n service (single app container; calls the scanner)"          
+      105 +  @echo "  deploy-api       Deploy the api Cloud Run service (
+          +gcloud run deploy)"                                           
+      106 +  @echo "  deploy-worker    Deploy the worker Cloud Run servic
+          +e (gcloud run deploy; calls the scanner)"                     
+      107    @echo "  pubsub-push      Create the authenticated push subs
+           cription to the worker"
+      108    @echo "  deploy           build-push + deploy-api + deploy-w
+           orker + pubsub-push"
+      109    @echo ""
+⏺ Maintenant le cœur : remplacer les cibles render-api/render-worker +
+  deploy-api/deploy-worker par des gcloud run deploy.
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 32 lines, removed 27 lines
+      255    #   docker push $(IMAGE_URI)
+      256  
+      257  # ------------------------------------------------------------
+           ---------
+      258 -# Render the Knative templates with envsubst (explicit variabl
+          -e allow-list so                                               
+      259 -# nothing else in the YAML is accidentally expanded).         
+      260 -render-api:                                                   
+      261 -  IMAGE_URI="$(IMAGE_URI)" API_SERVICE="$(API_SERVICE)" API_SA
+          -="$(API_SA)" \                                                
+      262 -  GCP_PROJECT_ID="$(PROJECT_ID)" GCS_BUCKET="$(BUCKET)" PUBSUB
+          -_SCAN_TOPIC="$(TOPIC)" \                                      
+      263 -  DB_URL="$(DB_URL)" DB_USER="$(DB_USER)" DB_SECRET_NAME="$(DB
+          -_SECRET_NAME)" \                                              
+      264 -    envsubst '$$IMAGE_URI $$API_SERVICE $$API_SA $$GCP_PROJECT
+          -_ID $$GCS_BUCKET $$PUBSUB_SCAN_TOPIC $$DB_URL $$DB_USER $$DB_S
+          -ECRET_NAME' \                                                 
+      265 -    < $(DEPLOY_DIR)/api-service.yaml > $(DEPLOY_DIR)/.api-serv
+          -ice.rendered.yaml                                             
+      258 +# Both services are single-container (DB reached over TLS, no 
+          +sidecar), so they                                             
+      259 +# deploy imperatively with `gcloud run deploy` -- no Knative Y
+          +AML to render.                                                
+      260 +# The env values carry no commas, so the default comma-delimit
+          +ed --set-env-vars                                             
+      261 +# is safe. Cloud Run adds a default TCP startup probe on --por
+          +t; we keep an                                                 
+      262 +# explicit one to preserve the generous 300s startup window (S
+          +pring Boot boot).                                             
+      263 +deploy-api: ## Deploy the api Cloud Run service (public, X-API
+          +-Key enforced in-app).                                        
+      264 +  # --allow-unauthenticated makes the endpoint public (grants 
+          +allUsers the                                                  
+      265 +  # run.invoker role); the app still enforces the X-API-Key he
+          +ader itself.                                                  
+      266 +  gcloud run deploy $(API_SERVICE) \                          
+      267 +    --image=$(IMAGE_URI) --region=$(REGION) --project=$(PROJEC
+          +T_ID) \                                                       
+      268 +    --service-account=$(API_SA) \                             
+      269 +    --allow-unauthenticated --ingress=all \                   
+      270 +    --port=8080 --cpu=1 --memory=512Mi \                      
+      271 +    --min-instances=0 --max-instances=10 --timeout=60 \       
+      272 +    --labels=app=praxedo-upload,component=api \               
+      273 +    --startup-probe=tcpSocket.port=8080,periodSeconds=10,failu
+          +reThreshold=30 \                                              
+      274 +    --set-env-vars=SPRING_PROFILES_ACTIVE=gcp,SERVER_PORT=8080
+          +,GCP_PROJECT_ID=$(PROJECT_ID),GCS_BUCKET=$(BUCKET),PUBSUB_SCAN
+          +_TOPIC=$(TOPIC),DB_URL=$(DB_URL),DB_USER=$(DB_USER) \         
+      275 +    --set-secrets=DB_PASSWORD=$(DB_SECRET_NAME):latest        
+      276  
+      267 -render-worker:                                                
+      277 +deploy-worker: ## Deploy the worker Cloud Run service (calls t
+          +he private scanner).                                          
+      278 +  # The worker resolves SCANNER_URL from the deployed scanner:
+          + fail early if it                                             
+      279 +  # is missing. Private service (--no-allow-unauthenticated); 
+          +only the push SA                                              
+      280 +  # is later granted run.invoker, by `make pubsub-push`.      
+      281    @SU="$(SCANNER_URL)"; test -n "$$SU" || { echo "ERROR: scann
+           er not deployed: $(SCANNER_SERVICE) has no URL. Deploy the pra
+           xedo-upload-scanner repo first."; exit 1; }; \
+      269 -  IMAGE_URI="$(IMAGE_URI)" WORKER_SERVICE="$(WORKER_SERVICE)" 
+          -WORKER_SA="$(WORKER_SA)" \                                    
+      270 -  GCP_PROJECT_ID="$(PROJECT_ID)" GCS_BUCKET="$(BUCKET)" PUBSUB
+          -_SCAN_TOPIC="$(TOPIC)" \                                      
+      271 -  DB_URL="$(DB_URL)" DB_USER="$(DB_USER)" DB_SECRET_NAME="$(DB
+          -_SECRET_NAME)" \                                              
+      272 -  SCANNER_URL="$$SU" SCANNER_AUDIENCE="$$SU" \                
+      273 -    envsubst '$$IMAGE_URI $$WORKER_SERVICE $$WORKER_SA $$GCP_P
+          -ROJECT_ID $$GCS_BUCKET $$PUBSUB_SCAN_TOPIC $$DB_URL $$DB_USER 
+          -$$DB_SECRET_NAME $$SCANNER_URL $$SCANNER_AUDIENCE' \          
+      274 -    < $(DEPLOY_DIR)/worker-service.yaml > $(DEPLOY_DIR)/.worke
+          -r-service.rendered.yaml                                       
+      282 +  gcloud run deploy $(WORKER_SERVICE) \                       
+      283 +    --image=$(IMAGE_URI) --region=$(REGION) --project=$(PROJEC
+          +T_ID) \                                                       
+      284 +    --service-account=$(WORKER_SA) \                          
+      285 +    --no-allow-unauthenticated --ingress=all \                
+      286 +    --port=8080 --cpu=1 --memory=1Gi \                        
+      287 +    --min-instances=0 --max-instances=5 --timeout=600 \       
+      288 +    --labels=app=praxedo-upload,component=worker \            
+      289 +    --startup-probe=tcpSocket.port=8080,periodSeconds=10,failu
+          +reThreshold=30 \                                              
+      290 +    --set-env-vars=SPRING_PROFILES_ACTIVE=gcp,SERVER_PORT=8080
+          +,GCP_PROJECT_ID=$(PROJECT_ID),GCS_BUCKET=$(BUCKET),PUBSUB_SCAN
+          +_TOPIC=$(TOPIC),SCANNER_URL=$$SU,SCANNER_AUDIENCE=$$SU,SCANNER
+          +_OIDC_ENABLED=true,DB_URL=$(DB_URL),DB_USER=$(DB_USER) \      
+      291 +    --set-secrets=DB_PASSWORD=$(DB_SECRET_NAME):latest        
+      292  
+      276 -deploy-api: render-api ## Deploy the api Cloud Run service (pu
+          -blic, X-API-Key enforced in-app).                             
+      277 -  gcloud run services replace $(DEPLOY_DIR)/.api-service.rende
+          -red.yaml \                                                    
+      278 -    --region=$(REGION) --project=$(PROJECT_ID)                
+      279 -  # Public endpoint: the app checks X-API-Key itself.         
+      280 -  gcloud run services add-iam-policy-binding $(API_SERVICE) \ 
+      281 -    --region=$(REGION) --member=allUsers \                    
+      282 -    --role=roles/run.invoker --project=$(PROJECT_ID)          
+      283 -                                                              
+      284 -deploy-worker: render-worker ## Deploy the worker Cloud Run se
+          -rvice (single app container; calls the private scanner).      
+      285 -  gcloud run services replace $(DEPLOY_DIR)/.worker-service.re
+          -ndered.yaml \                                                 
+      286 -    --region=$(REGION) --project=$(PROJECT_ID)                
+      287 -                                                              
+      293  # ------------------------------------------------------------
+           ---------
+      294  pubsub-push: ## Create/update the authenticated push subscript
+           ion to the worker.
+      295    # Only the push SA may invoke the (otherwise private) worker
+           .
+
+⏺ Maintenant le Makefile scanner (multi-conteneurs).
+
+⏺ Update(praxedo-upload-scanner/deploy/Makefile)
+  ⎿  Added 1 line, removed 1 line
+       8  # Order from zero to deployed:
+       9  #   make scanner-sa        # once: create the scanner runtime s
+          ervice account
+      10  #   make build-push        # build + push the scanner image
+      11 -#   make deploy            # render + apply the private Cloud R
+         -un service                                                     
+      11 +#   make deploy            # deploy the private Cloud Run servi
+         +ce (app + ClamAV sidecar)                                      
+      12  #   make iam               # bucket read for the scanner + run.
+          invoker for the worker
+      13  #   make url               # print the deployed scanner URL (fe
+          ed it to the worker)
+      14  #
+
+⏺ Update(praxedo-upload-scanner/deploy/Makefile)
+  ⎿  Added 1 line, removed 1 line
+      50  
+      51  .DEFAULT_GOAL := help
+      52  
+      53 -.PHONY: help config scanner-sa build-push render deploy iam url
+         - all                                                           
+      53 +.PHONY: help config scanner-sa build-push deploy iam url all   
+      54  
+      55  help: ## Show this help.
+      56    @echo "praxedo-upload-scanner - GCP deployment targets:"
+
+⏺ Update(praxedo-upload-scanner/deploy/Makefile)
+  ⎿  Added 1 line, removed 1 line
+      57    @echo ""
+      58    @echo "  scanner-sa    Create the scanner runtime service acc
+          ount"
+      59    @echo "  build-push    Build the image with Cloud Build and p
+          ush to Artifact Registry"
+      60 -  @echo "  deploy        Render + apply the private scanner Clo
+         -ud Run service"                                                
+      60 +  @echo "  deploy        Deploy the private scanner Cloud Run s
+         +ervice (app + ClamAV sidecar)"                                 
+      61    @echo "  iam           Grant the scanner read on the bucket +
+           the worker run.invoker on the scanner"
+      62    @echo "  url           Print the deployed scanner URL"
+      63    @echo "  all           scanner-sa + build-push + deploy + iam
+          "
+
+⏺ Update(praxedo-upload-scanner/deploy/Makefile)
+  ⎿  Added 21 lines, removed 9 lines
+       84    #   docker build -t $(IMAGE_URI) $(REPO_ROOT)
+       85    #   docker push $(IMAGE_URI)
+       86  
+       87 -render:                                                       
+       88 -  IMAGE_URI="$(IMAGE_URI)" SCANNER_SERVICE="$(SCANNER_SERVICE)
+          -" SCANNER_SA="$(SCANNER_SA)" \                                
+       89 -  CLAMAV_IMAGE="$(CLAMAV_IMAGE)" \                            
+       90 -    envsubst '$$IMAGE_URI $$SCANNER_SERVICE $$SCANNER_SA $$CLA
+          -MAV_IMAGE' \                                                  
+       91 -    < $(DEPLOY_DIR)/scanner-service.yaml > $(DEPLOY_DIR)/.scan
+          -ner-service.rendered.yaml                                     
+       87 +# Two containers (app + ClamAV sidecar), so deploy imperativel
+          +y with the                                                    
+       88 +# multi-container `gcloud run deploy --container ...` syntax. 
+          +Service-level flags                                           
+       89 +# come BEFORE the first --container; container-scoped flags fo
+          +llow their --container.                                       
+       90 +#   - app depends on clamav (--depends-on): it starts only onc
+          +e clamd's TCP                                                 
+       91 +#     startup probe passes, so no scan hits a cold clamd.     
+       92 +#   - CPU is always allocated (--no-cpu-throttling) and one in
+          +stance stays warm                                             
+       93 +#     (--min-instances=1) to keep the ClamAV signature DB load
+          +ed.                                                           
+       94 +deploy: ## Deploy the private scanner Cloud Run service (app +
+          + ClamAV sidecar).                                             
+       95 +  gcloud run deploy $(SCANNER_SERVICE) \                      
+       96 +    --region=$(REGION) --project=$(PROJECT_ID) \              
+       97 +    --service-account=$(SCANNER_SA) \                         
+       98 +    --no-allow-unauthenticated --ingress=internal \           
+       99 +    --min-instances=1 --max-instances=5 --no-cpu-throttling --
+          +timeout=550 \                                                 
+      100 +    --labels=app=praxedo-upload,component=scanner \           
+      101 +    --container=app --image=$(IMAGE_URI) --port=8080 --cpu=1 -
+          +-memory=512Mi \                                               
+      102 +      --depends-on=clamav \                                   
+      103 +      --set-env-vars=CLAMAV_HOST=127.0.0.1,CLAMAV_PORT=3310 \ 
+      104 +      --startup-probe=httpGet.path=/health,httpGet.port=8080,p
+          +eriodSeconds=15,failureThreshold=40 \                         
+      105 +      --liveness-probe=httpGet.path=/health,httpGet.port=8080,
+          +periodSeconds=30 \                                            
+      106 +    --container=clamav --image=$(CLAMAV_IMAGE) --cpu=2 --memor
+          +y=2Gi \                                                       
+      107 +      --startup-probe=tcpSocket.port=3310,periodSeconds=15,fai
+          +lureThreshold=40                                              
+      108  
+       93 -deploy: render ## Deploy the private scanner Cloud Run service
+          -.                                                             
+       94 -  gcloud run services replace $(DEPLOY_DIR)/.scanner-service.r
+          -endered.yaml \                                                
+       95 -    --region=$(REGION) --project=$(PROJECT_ID)                
+       96 -                                                              
+      109  iam: ## Bucket read-only for the scanner + run.invoker for the
+            worker on this scanner.
+      110    # Scanner reads objects to scan (read-only; the worker keeps
+            delete rights).
+      111    gcloud storage buckets add-iam-policy-binding gs://$(BUCKET)
+            \
+
+⏺ Suppression des 3 templates YAML devenus inutiles, puis mise à jour des docs
+  (README backend + comment workflow scanner).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Update(praxedo-upload-backend/deploy/README.md)
+  ⎿  Added 4 lines, removed 3 lines
+      58  modifié** : elle se connecte **directement** à Supabase via la 
+          connection string `DB_URL`
+      59  (`jdbc:postgresql://<projet>.pooler.supabase.com:5432/postgres?
+          sslmode=require`). Plus de **Cloud SQL Auth
+      60  Proxy** en sidecar ni de rôle `cloudsql.client` : la base est p
+          rovisionnée **hors GCP** (dashboard Supabase),
+      61 -et le mot de passe est stocké dans **Secret Manager** (`make se
+         -crets DB_PASSWORD=...`). Les services restent                  
+      62 -décrits en **YAML Knative** (`api-service.yaml`, `worker-servic
+         -e.yaml`, appliqués via                                         
+      63 -`gcloud run services replace`) pour porter la configuration d'e
+         -nvironnement.                                                  
+      61 +et le mot de passe est stocké dans **Secret Manager** (`make se
+         +crets DB_PASSWORD=...`). Les deux services                     
+      62 +étant **mono-conteneur** (plus de sidecar), ils sont déployés *
+         +*impérativement** via `gcloud run deploy` :                    
+      63 +variables d'environnement, secret, scaling, ingress et sonde de
+         + démarrage passent en **flags** (plus de                       
+      64 +manifeste Knative à rendre).                                   
+      65  
+      66  > **Flyway** : utiliser le **session pooler** Supabase (`:5432`
+          ) ou une connexion **directe** pour les
+      67  > migrations ; le **transaction pooler** (`:6543`) ne supporte 
+          pas toutes les fonctionnalités Flyway.
+
+⏺ Update(praxedo-upload-backend/deploy/README.md)
+  ⎿  Added 1 line, removed 3 lines
+      71  | Fichier | Rôle |
+      72  |---|---|
+      73  | `../Dockerfile` | Image multi-stage (build Maven/JDK 21 → run
+          time JRE 21), fat jar, port 8080. |
+      74 -| `Makefile` | Toutes les cibles gcloud paramétrées par variabl
+         -es (voir en tête du fichier). |                                
+      75 -| `api-service.yaml` | Manifeste Cloud Run du service `api` (ap
+         -p seul). Template `${...}` rendu par envsubst. |               
+      76 -| `worker-service.yaml` | Manifeste Cloud Run du service `worke
+         -r` (app seul ; appelle le scanner). |                          
+      74 +| `Makefile` | Toutes les cibles gcloud paramétrées par variabl
+         +es (voir en tête du fichier). Les services `api`/`worker` sont 
+         +déployés via `gcloud run deploy` (flags), plus de manifeste Kna
+         +tive. |                                                        
+      75  | `gcs-cors.json` | Politique CORS du bucket (PUT/GET depuis l'
+          origine de l'UI). |
+      76  | *(dépôt `praxedo-upload-scanner`)* | Le service `scanner` a s
+          on propre `deploy/` (manifeste + Makefile). |
+      77  | `../.github/workflows/deploy.yml` | CI/CD : test + build + `m
+          ake deploy` sur push `main` (WIF). |
+
+⏺ Update(praxedo-upload-backend/deploy/README.md)
+  ⎿  Added 1 line, removed 1 line
+      80  
+      81  - Un **projet GCP** avec la **facturation activée**.
+      82  - `gcloud` installé et connecté : `gcloud auth login` puis `gcl
+          oud config set project <PROJECT_ID>`.
+      83 -- `make`, `envsubst` (paquet `gettext`) et `openssl` disponible
+         -s localement.                                                  
+      83 +- `make` et `openssl` disponibles localement.                  
+      84  - Les images de build/déploiement s'exécutent côté GCP (Cloud B
+          uild) : **Docker n'est pas requis en local**.
+      85  
+      86  ## De zéro à déployé
+
+⏺ Update(.github/workflows/scanner-deploy.yml)
+  ⎿  Added 1 line, removed 1 line
+      1  # ==============================================================
+         =======
+      2  # CI/CD : build et deploie praxedo-upload-scanner (service AV pr
+         ive) sur Cloud Run.
+      3  #
+      4 -# Le scanner tourne avec un sidecar ClamAV (voir deploy/scanner-
+        -service.yaml).                                                  
+      4 +# Le scanner tourne avec un sidecar ClamAV (voir deploy/Makefile
+        +, cible `deploy`).                                              
+      5  # Auth via Workload Identity Federation (pas de cle JSON longue 
+         duree).
+      6  #
+      7  #   Secrets   : GCP_WIF_PROVIDER, GCP_DEPLOY_SA
+
+⏺ Vérifions que les trois Makefiles sont syntaxiquement valides et que les
+  recettes s'expansent correctement (dry-run make -n, avec des valeurs bidon
+  pour éviter les appels gcloud réels).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Les trois recettes s'expansent proprement et tous les flags existent bien dans
+  gcloud 539. Reste à corriger la mémoire projet infra.md, qui décrit encore
+  l'ancien raisonnement (« api multi-conteneurs → YAML Knative obligatoire »),
+  désormais faux.
+
+⏺ Update(.claude/memory/infra.md)
+  ⎿  Added 2 lines, removed 2 lines
+       3  Outillage **prêt mais non exécuté** (aucun `gcloud`/`docker` la
+          ncé ; pas de projet GCP/auth disponible côté agent). gcloud + M
+          akefile uniquement — **pas de Terraform** (décision D11). Un vr
+          ai déploiement nécessite que l'utilisateur fasse `gcloud auth l
+          ogin` puis `make`.
+       4  
+       5  ## Topologie cible (Cloud Run) — 3 services (depuis D15, scanne
+          r externalisé)
+       6 -- **`api`** (public, `X-API-Key` vérifié dans l'app) : sert `/a
+         -pi/**`. Multi-conteneurs (app + sidecar Cloud SQL Auth Proxy). 
+       7 -- **`worker`** (privé, **léger** depuis D15) : **2 conteneurs**
+         - — app (profil `gcp`) + **Cloud SQL Auth Proxy** (`localhost:54
+         -32`). **Plus de ClamAV** ; `min-instances=0` (scale-to-zero). R
+         -eçoit le push Pub/Sub sur `/internal/scan-events`, **appelle** 
+         -le scanner en HTTP (OIDC) et écrit le verdict.                 
+       6 +- **`api`** (public, `X-API-Key` vérifié dans l'app) : sert `/a
+         +pi/**`. **Mono-conteneur** (app seul ; DB Supabase en TLS direc
+         +t depuis D17 → plus de sidecar).                               
+       7 +- **`worker`** (privé, **léger** depuis D15) : **mono-conteneur
+         +** (app, profil `gcp` ; DB Supabase en TLS direct depuis D17). 
+         +**Plus de ClamAV** ; `min-instances=0` (scale-to-zero). Reçoit 
+         +le push Pub/Sub sur `/internal/scan-events`, **appelle** le sca
+         +nner en HTTP (OIDC) et écrit le verdict.                       
+       8  - **`scanner`** (privé, repo `praxedo-upload-scanner`) : **2 co
+          nteneurs** — app FastAPI (`POST /scan {gsUri}` → verdict) + **C
+          lamAV** (`clamav/clamav-debian`, clamd `127.0.0.1:3310`, `min-i
+          nstances=1` pour garder la base de signatures chaude, 2Gi). `in
+          gress: internal`, aucun binding `allUsers`.
+       9  - **Cloud SQL** Postgres, **GCS** (bucket + CORS + notification
+           `OBJECT_FINALIZE`), **Pub/Sub** (topic `scan-requests` + DLQ +
+           souscription push OIDC), **Artifact Registry**, **Secret Manag
+          er** (mot de passe DB).
+      10  
+
+⏺ Update(.claude/memory/infra.md)
+  ⎿  Added 5 lines, removed 2 lines
+      10  
+      11  > **Changement DB (D17, 2026-07-14) :** **Supabase Postgres** r
+          emplace **Cloud SQL**. Conséquences (à implémenter, non encore 
+          faites) : plus de provisioning Cloud SQL ni de **sidecar Cloud 
+          SQL Auth Proxy** (la « décision d'ingénierie clé » ci-dessous d
+          evient caduque pour la connexion DB → api/worker peuvent redeve
+          nir mono-conteneur côté DB) ; l'app se connecte à la **connecti
+          on string Supabase** (pooler PgBouncer `:6543` en transaction-p
+          ooling ou `:5432` en direct, `sslmode=require`) via le pilote J
+          DBC Postgres standard — `src/` inchangé (D7). Flyway : préférer
+           session-pooling/connexion directe (le transaction-pooling PgBo
+          uncer ne supporte pas tout). Secret = URL/mot de passe Supabase
+           (Secret Manager). Voir [[decisions-archi]] **D17**.
+      12  
+      13 -## Décision d'ingénierie clé — sidecar Cloud SQL Auth Proxy    
+      14 -Le code applicatif utilise le **pilote JDBC PostgreSQL standard
+         - (TCP)**, pas la SocketFactory Cloud SQL, et on n'a **pas modif
+         -ié `src/`**. Donc **les deux** services embarquent un sidecar C
+         -loud SQL Auth Proxy (`localhost:5432`) → l'api est aussi multi-
+         -conteneurs → déploiement par **YAML Knative + `gcloud run servi
+         -ces replace`** (pas `gcloud run deploy` mono-conteneur). Altern
+         -ative future : ajouter la SocketFactory au backend pour supprim
+         -er le sidecar api.                                             
+      13 +## Déploiement — `gcloud run deploy` impératif (plus de YAML Kn
+         +ative depuis 2026-07-14)                                       
+      14 +Historique : tant que la DB passait par un **sidecar Cloud SQL 
+         +Auth Proxy**, api/worker étaient multi-conteneurs → déploiement
+         + par **YAML Knative + `gcloud run services replace`**. Depuis *
+         +*D17 (Supabase en TLS direct, pilote JDBC standard, `src/` inch
+         +angé)**, ce sidecar a disparu : **api et worker sont mono-conte
+         +neur**. On a donc supprimé les templates `*-service.yaml` + les
+         + cibles `render-*` et on déploie **impérativement** :          
+      15 +- **api / worker** : `gcloud run deploy` mono-conteneur (env/se
+         +cret/scaling/ingress/sonde en **flags**). api = `--allow-unauth
+         +enticated` (remplace le binding `allUsers`) ; worker = `--no-al
+         +low-unauthenticated` (seul le push SA reçoit `run.invoker` via 
+         +`pubsub-push`).                                                
+      16 +- **scanner** : 2 conteneurs (app FastAPI + sidecar ClamAV) → `
+         +gcloud run deploy` **multi-conteneurs** (`--container app … --c
+         +ontainer clamav …`), avec `--depends-on=clamav`, `--startup-pro
+         +be`/`--liveness-probe`, `--no-cpu-throttling`, `--min-instances
+         +=1`. Nécessite gcloud ≥ ~2024 (flags `--container`/`--depends-o
+         +n`/`--startup-probe`) — vérifié OK sur SDK 539.                
+      17 +Plus d'`envsubst` ni de `gcloud run services replace` dans aucu
+         +n composant.                                                   
+      18  
+      19  ## Fichiers (dépôt backend)
+      20  `Dockerfile` (multi-stage Maven/JDK21 → temurin JRE21, non-root
+          , même image pour api+worker, profil choisi au runtime), `deplo
+          y/Makefile` (cibles `enable-apis`/`bootstrap`/`infra`/`build-pu
+          sh`(Cloud Build)/`deploy-api`/`deploy-worker`/`pubsub-push`/`de
+          ploy` ; `render-worker` résout `SCANNER_URL` et exige que le sc
+          anner soit déployé d'abord), `deploy/{api,worker}-service.yaml`
+           (rendus par `envsubst` ; worker sans ClamAV), `deploy/gcs-cors
+          .json`, `.github/workflows/deploy.yml`, `deploy/README.md`. `do
+          cker-compose.yml` : ajoute un service `scanner` (build `../prax
+          edo-upload-scanner`, `STORAGE_EMULATOR_HOST`).
+
+⏺ Update(.claude/memory/infra.md)
+  ⎿  Added 1 line, removed 1 line
+      17  Plus d'`envsubst` ni de `gcloud run services replace` dans aucu
+          n composant.
+      18  
+      19  ## Fichiers (dépôt backend)
+      20 -`Dockerfile` (multi-stage Maven/JDK21 → temurin JRE21, non-root
+         -, même image pour api+worker, profil choisi au runtime), `deplo
+         -y/Makefile` (cibles `enable-apis`/`bootstrap`/`infra`/`build-pu
+         -sh`(Cloud Build)/`deploy-api`/`deploy-worker`/`pubsub-push`/`de
+         -ploy` ; `render-worker` résout `SCANNER_URL` et exige que le sc
+         -anner soit déployé d'abord), `deploy/{api,worker}-service.yaml`
+         - (rendus par `envsubst` ; worker sans ClamAV), `deploy/gcs-cors
+         -.json`, `.github/workflows/deploy.yml`, `deploy/README.md`. `do
+         -cker-compose.yml` : ajoute un service `scanner` (build `../prax
+         -edo-upload-scanner`, `STORAGE_EMULATOR_HOST`).                 
+      20 +`Dockerfile` (multi-stage Maven/JDK21 → temurin JRE21, non-root
+         +, même image pour api+worker, profil choisi au runtime), `deplo
+         +y/Makefile` (cibles `enable-apis`/`bootstrap`/`infra`/`build-pu
+         +sh`(Cloud Build)/`deploy-api`/`deploy-worker`/`pubsub-push`/`de
+         +ploy` ; `deploy-worker` résout `SCANNER_URL` en tête de recette
+         + et exige que le scanner soit déployé d'abord ; plus de cibles 
+         +`render-*`), `deploy/gcs-cors.json`, `.github/workflows/backend
+         +-deploy.yml`, `deploy/README.md`. `docker-compose.yml` : ajoute
+         + un service `scanner` (build `../praxedo-upload-scanner`, `STOR
+         +AGE_EMULATOR_HOST`).                                           
+      21  
+      22  ## Fichiers (dépôt scanner `praxedo-upload-scanner`, nouveau — 
+          D15)
+      23  `app/{main,scanner,gcs,config,models}.py` (FastAPI `POST /scan`
+          +`GET /health`, wrapper clamd, download GCS en flux), `tests/` 
+          (pytest hermétiques + test intégration clamd opt-in), `Dockerfi
+          le` (Python seul, clamd = sidecar), `deploy/{scanner-service.ya
+          ml, Makefile}` (service privé ; Makefile crée le SA scanner, bu
+          ild/push, deploy, IAM `objectViewer` + `run.invoker` du worker 
+          SA), `README.md`. Contrat gelé : req `{gsUri}` → rép `{infected
+          , engine, threatName}`.
+
+⏺ Update(.claude/memory/infra.md)
+  ⎿  Added 1 line, removed 1 line
+      20  `Dockerfile` (multi-stage Maven/JDK21 → temurin JRE21, non-root
+          , même image pour api+worker, profil choisi au runtime), `deplo
+          y/Makefile` (cibles `enable-apis`/`bootstrap`/`infra`/`build-pu
+          sh`(Cloud Build)/`deploy-api`/`deploy-worker`/`pubsub-push`/`de
+          ploy` ; `deploy-worker` résout `SCANNER_URL` en tête de recette
+           et exige que le scanner soit déployé d'abord ; plus de cibles 
+          `render-*`), `deploy/gcs-cors.json`, `.github/workflows/backend
+          -deploy.yml`, `deploy/README.md`. `docker-compose.yml` : ajoute
+           un service `scanner` (build `../praxedo-upload-scanner`, `STOR
+          AGE_EMULATOR_HOST`).
+      21  
+      22  ## Fichiers (dépôt scanner `praxedo-upload-scanner`, nouveau — 
+          D15)
+      23 -`app/{main,scanner,gcs,config,models}.py` (FastAPI `POST /scan`
+         -+`GET /health`, wrapper clamd, download GCS en flux), `tests/` 
+         -(pytest hermétiques + test intégration clamd opt-in), `Dockerfi
+         -le` (Python seul, clamd = sidecar), `deploy/{scanner-service.ya
+         -ml, Makefile}` (service privé ; Makefile crée le SA scanner, bu
+         -ild/push, deploy, IAM `objectViewer` + `run.invoker` du worker 
+         -SA), `README.md`. Contrat gelé : req `{gsUri}` → rép `{infected
+         -, engine, threatName}`.                                        
+      23 +`app/{main,scanner,gcs,config,models}.py` (FastAPI `POST /scan`
+         ++`GET /health`, wrapper clamd, download GCS en flux), `tests/` 
+         +(pytest hermétiques + test intégration clamd opt-in), `Dockerfi
+         +le` (Python seul, clamd = sidecar), `deploy/Makefile` (service 
+         +privé ; crée le SA scanner, build/push, `deploy` = `gcloud run 
+         +deploy` multi-conteneurs app+clamav, IAM `objectViewer` + `run.
+         +invoker` du worker SA ; plus de `scanner-service.yaml`), `READM
+         +E.md`. Contrat gelé : req `{gsUri}` → rép `{infected, engine, t
+         +hreatName}`.                                                   
+      24  
+      25  ## IAM (moindre privilège) — vérifié cohérent
+      26  - **api SA** : `serviceAccountTokenCreator` **sur elle-même** (
+          signature **V4 signBlob** des URLs GCS), `storage.objectAdmin`,
+           `pubsub.publisher`, `cloudsql.client`, accès secret DB.
+
+⏺ Vérification finale : plus aucune référence orpheline aux fichiers/targets
+  supprimés, et revue du diff complet.
+
+  Ran 1 shell command (ctrl+o to expand)
+⏺ Il reste des références orphelines à nettoyer : les étapes CI « Install
+  envsubst » (les deux workflows n'en ont plus besoin) et une mention de
+  scanner-service.yaml dans le README backend. Regardons les workflows.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Je retire les deux étapes CI « Install envsubst » devenues inutiles et je
+  corrige la mention scanner-service.yaml du README.
+
+⏺ Update(.github/workflows/backend-deploy.yml)
+  ⎿  Removed 3 lines
+      73        - name: Set up gcloud
+      74          uses: google-github-actions/setup-gcloud@v2
+      75  
+      76 -      - name: Install envsubst (gettext)                       
+      77 -        run: sudo apt-get update && sudo apt-get install -y get
+         -text-base                                                      
+      78 -                                                               
+      76        - name: Build image and deploy to Cloud Run
+      77          working-directory: praxedo-upload-backend/deploy
+      78          run: |
+
+⏺ Update(.github/workflows/scanner-deploy.yml)
+  ⎿  Removed 3 lines
+      40        - name: Checkout
+      41          uses: actions/checkout@v4
+      42  
+      43 -      - name: Install envsubst (gettext)                       
+      44 -        run: sudo apt-get update && sudo apt-get install -y get
+         -text-base                                                      
+      45 -                                                               
+      43        - name: Authenticate to Google Cloud (WIF)
+      44          uses: google-github-actions/auth@v2
+      45          with:
+
+⏺ Update(praxedo-upload-backend/deploy/README.md)
+  ⎿  Added 1 line, removed 1 line
+      177    verrou côté Postgres : des démarrages concurrents sont sûrs 
+           (l'un attend l'autre).
+      178  - **Coût** : le **worker** est désormais léger (`min-instances
+           =0`, 1 vCPU / 1Gi = app seul, plus de proxy DB) et
+      179    scale à zéro. La charge « chaude » (base de signatures ClamA
+           V) est portée par le **scanner**
+      180 -  (`min-instances=1` + `cpu-throttling=false`, ~2Gi), ajustabl
+          -e dans son `scanner-service.yaml`.                            
+      180 +  (`min-instances=1` + `cpu-throttling=false`, ~2Gi), ajustabl
+          +e dans son `deploy/Makefile` (cible `deploy`).                
+      181  - **CI/CD** : le workflow suppose l'infra déjà provisionnée (é
+           tapes 1–3 ci-dessus faites une fois à la main) ;
+      182    chaque push `main` ne fait que tester, builder et redéployer
+            (`make deploy`). Secrets/variables requis :
+      183    voir l'en-tête de `../.github/workflows/deploy.yml`.
+
+⏺ Vérification que les workflows restent du YAML valide après retrait des
+  étapes, et dernier grep de contrôle.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Tout est cohérent — aucune référence orpheline hors des journaux historiques
+  (.claude/sessions/, decisions-archi.md, qui sont des instantanés datés à ne
+  pas réécrire).
+
+  Résumé
+
+  J'ai remplacé le déploiement par manifestes Knative + gcloud run services 
+  replace par des commandes gcloud run deploy impératives, pour les trois
+  services.
+
+  Pourquoi c'était possible maintenant : la mémoire disait que l'api devait
+  rester en YAML Knative car elle embarquait un sidecar Cloud SQL Auth Proxy
+  (multi-conteneurs). Or depuis la bascule vers Supabase en TLS direct, api et 
+  worker sont mono-conteneur — le verrou avait sauté.
+
+  Fichiers modifiés
+  - praxedo-upload-backend/deploy/Makefile : deploy-api/deploy-worker en gcloud 
+  run deploy (flags env/secret/scaling/ingress/sonde) ; cibles render-*
+  supprimées ; --allow-unauthenticated remplace le binding allUsers séparé ; le
+  garde-fou SCANNER_URL est conservé dans deploy-worker.
+  - praxedo-upload-scanner/deploy/Makefile : deploy en gcloud run deploy
+  multi-conteneurs (--container app … --container clamav …) avec
+  --depends-on=clamav, sondes httpGet/tcpSocket, --no-cpu-throttling,
+  --min-instances=1 — parité complète avec l'ancien YAML.
+  - Supprimés : api-service.yaml, worker-service.yaml, scanner-service.yaml.
+  - READMEs, comment du workflow scanner, et retrait des étapes CI « Install 
+  envsubst » (plus utilisées).
+  - Mémoire .claude/memory/infra.md : raisonnement périmé corrigé + nouvelle
+  approche documentée.
+
+  Vérifs faites
+  - gcloud 539 expose bien tous les flags requis (--container, --depends-on,
+  --startup-probe, --liveness-probe, --no-cpu-throttling).
+  - Dry-run make -n des 3 cibles : recettes valides, expansion correcte.
+  - Workflows toujours du YAML valide.
+
+  Points de parité à noter
+  - Sonde de liveness TCP de l'api/worker abandonnée (le CLI n'a pas de clé
+  tcpSocket pour --liveness-probe, et une sonde TCP de liveness sur le port HTTP
+  apporte peu). La sonde de démarrage TCP est conservée. Pour le scanner,
+  toutes les sondes sont préservées.
+  - Annotation launch-stage: GA retirée (GA par défaut).
+  - Je n'ai pas pu tester un vrai déploiement (pas d'accès GCP côté agent) —
+  seulement l'expansion des commandes.
+
+  Note : un fichier parasite 2026-07-14-232416-local-command-caveat…txt traîne à
+  la racine (non suivi, pas créé par moi) — je n'y touche pas.
+
+  Veux-tu que je crée une branche task/... et que je commit tout ça (workflow PR
+  du projet) ?
+
+✻ Brewed for 13m 11s
+
+❯ is the envs imported in makefiles in cicd process ?                           
+
+⏺ Bonne question — regardons précisément ce que le CI passe à make, et ce que
+  les recettes deploy consomment réellement.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Analyse faite. Réponse courte : partiellement — et il y a un vrai trou côté
+  backend, préexistant (pas introduit par mon refactor).
+
+  Comment make importe les variables
+
+  Dans les Makefiles, toutes les variables de config sont en ?= (ex. PROJECT_ID 
+  ?= …, DB_URL ?= …). Ordre de priorité pour une variable ?= :
+
+  1. make VAR=… en ligne de commande (gagne toujours) →
+  2. variable d'environnement VAR du même nom (le bloc env: du job) →
+  3. valeur par défaut du Makefile.
+
+  Donc une variable n'arrive dans la recette que si le CI la passe en argument
+  make ou la met dans env:. Sinon → valeur par défaut du Makefile.
+
+  Scanner (scanner-deploy.yml) — ✅ complet
+
+  make build-push deploy reçoit PROJECT_ID, REGION, IMAGE_TAG. La recette deploy
+  ne consomme que ça + des dérivées (SCANNER_SA, IMAGE_URI) et CLAMAV_IMAGE
+  (défaut sain). Rien ne manque.
+
+  Backend (backend-deploy.yml) — ⚠️ incomplet
+
+  Le CI passe : PROJECT_ID, REGION (aussi dans env:), IMAGE_TAG, BUCKET,
+  UI_ORIGIN.
+
+  Mais deploy-api/deploy-worker consomment aussi :
+
+  ┌────────────────┬────────────┬───────────────────────────────────────────┐
+  │                │  Fournie   │                                           │
+  │    Variable    │ par le CI  │            Conséquence si non             │
+  │                │     ?      │                                           │
+  ├────────────────┼────────────┼───────────────────────────────────────────┤
+  │                │            │ tombe sur le défaut                       │
+  │ DB_URL         │ ❌ non     │ jdbc:...REPLACE-ME.pooler.supabase.com... │
+  │                │            │  → l'app ne joint pas la base             │
+  ├────────────────┼────────────┼───────────────────────────────────────────┤
+  │ DB_USER        │ ❌ non     │ défaut postgres (souvent OK, mais non     │
+  │                │            │ explicite)                                │
+  ├────────────────┼────────────┼───────────────────────────────────────────┤
+  │                │ ✅         │ lu depuis Secret Manager via              │
+  │ DB_PASSWORD    │ (indirect) │ --set-secrets (stocké une fois par make   │
+  │                │            │ infra) — pas un souci                     │
+  ├────────────────┼────────────┼───────────────────────────────────────────┤
+  │ TOPIC,         │ défauts    │ OK                                        │
+  │ DB_SECRET_NAME │ sains      │                                           │
+  ├────────────────┼────────────┼───────────────────────────────────────────┤
+  │                │ résolu via │ nécessite que le scanner soit déployé     │
+  │ SCANNER_URL    │  gcloud    │ avant ; sinon le garde-fou de             │
+  │                │ describe   │ deploy-worker fait échouer make deploy    │
+  └────────────────┴────────────┴───────────────────────────────────────────┘
+
+  Le point critique : DB_URL n'est jamais fourni au step de deploy (ni en env:,
+  ni en argument, ni persisté par make infra). Ni l'ancienne version Knative
+  ($(DB_URL) dans le YAML) ni la nouvelle ne le corrigent — c'était déjà cassé
+  avant, mon refactor conserve exactement le même comportement.
+
+  Correctif proposé
+
+  Ajouter DB_URL (et éventuellement DB_USER) comme GitHub Variable et le passer
+  au make deploy :
+
+        - name: Build image and deploy to Cloud Run
+          working-directory: praxedo-upload-backend/deploy
+          run: |
+            make deploy \
+              PROJECT_ID="$PROJECT_ID" \
+              REGION="$REGION" \
+              IMAGE_TAG="${{ github.sha }}" \
+              BUCKET="${{ vars.GCS_BUCKET }}" \
+              UI_ORIGIN="${{ vars.UI_ORIGIN }}" \
+              DB_URL="${{ vars.DB_URL }}" \
+              DB_USER="${{ vars.DB_USER }}"
+
+  (et documenter DB_URL/DB_USER dans l'en-tête « Required Variables » du
+  workflow).
+
+  Veux-tu que j'applique ce correctif au workflow backend ? Je peux aussi
+  ajouter un garde-fou dans deploy-api/deploy-worker qui refuse de déployer si 
+  DB_URL contient encore REPLACE-ME, pour éviter un déploiement silencieusement
+  cassé.
+
+✻ Baked for 1m 34s
+
+❯ oui                                                                           
+
+⏺ « oui » — j'applique les deux correctifs. Je relis d'abord l'état actuel des
+  recettes deploy-api/deploy-worker (le Makefile a été retouché entre-temps).
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Maintenant, le garde-fou dans le Makefile. J'ajoute une macro require_db_url
+  et je l'appelle en tête de deploy-api et deploy-worker.
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 10 lines
+      255    #   docker push $(IMAGE_URI)
+      256  
+      257  # ------------------------------------------------------------
+           ---------
+      258 +# Guard: refuse to deploy with an unset DB_URL. The default st
+          +ill carries the                                               
+      259 +# REPLACE-ME placeholder, and an empty value (e.g. an unset CI
+          + variable passed                                              
+      260 +# as DB_URL="") is just as broken -- both would deploy a servi
+          +ce that cannot                                                
+      261 +# reach the database. Pass DB_URL=... (see deploy/README.md). 
+      262 +define require_db_url                                         
+      263 +@case "$(DB_URL)" in ""|*REPLACE-ME*) echo "ERROR: DB_URL is n
+          +ot a real Supabase JDBC URL (got: '$(DB_URL)'). Pass DB_URL=..
+          +. (see deploy/README.md)."; exit 1 ;; esac                    
+      264 +endef                                                         
+      265 +                                                              
+      266 +# ------------------------------------------------------------
+          +---------                                                     
+      267  # Both services are single-container (DB reached over TLS, no 
+           sidecar), so they
+      268  # deploy imperatively with `gcloud run deploy` -- no Knative Y
+           AML to render.
+      269  # The env values carry no commas, so the default comma-delimit
+           ed --set-env-vars
+      270  # is safe. Cloud Run adds a default TCP startup probe on --por
+           t; we keep an
+      271  # explicit one to preserve the generous 300s startup window (S
+           pring Boot boot).
+      272  deploy-api: ## Deploy the api Cloud Run service (public, X-API
+           -Key enforced in-app).
+      273 +  $(require_db_url)                                           
+      274    # --allow-unauthenticated makes the endpoint public (grants 
+           allUsers the
+      275    # run.invoker role); the app still enforces the X-API-Key he
+           ader itself.
+      276    gcloud run deploy $(API_SERVICE) \
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 1 line
+      285      --set-secrets=DB_PASSWORD=$(DB_SECRET_NAME):latest
+      286  
+      287  deploy-worker: ## Deploy the worker Cloud Run service (calls t
+           he private scanner).
+      288 +  $(require_db_url)                                           
+      289    # The worker resolves SCANNER_URL from the deployed scanner:
+            fail early if it
+      290    # is missing. Private service (--no-allow-unauthenticated); 
+           only the push SA
+      291    # is later granted run.invoker, by `make pubsub-push`.
+
+⏺ Maintenant le workflow backend : passer DB_URL/DB_USER sans risque
+  d'écrasement par une valeur vide, et documenter les variables requises.
+
+⏺ Update(.github/workflows/backend-deploy.yml)
+  ⎿  Added 6 lines
+      14  #     GCP_REGION         e.g. europe-west1
+      15  #     GCS_BUCKET         e.g. my-gcp-project-praxedo-files
+      16  #     UI_ORIGIN          e.g. https://app.example.com
+      17 +#     DB_URL             Supabase JDBC string, e.g.            
+      18 +#                        jdbc:postgresql://<ref>.pooler.supabas
+         +e.com:5432/postgres?sslmode=require                            
+      19 +#     DB_USER            (optional) Supabase user; the pooler u
+         +ser is usually                                                 
+      20 +#                        postgres.<project-ref>. Defaults to "p
+         +ostgres" if unset.                                             
+      21 +#   NOTE: DB_PASSWORD is NOT set here -- it is read from Secret
+         + Manager at runtime                                            
+      22 +#   (stored once by `DB_PASSWORD=... make infra`).             
+      23  #
+      24  # The deploy SA needs: roles/run.admin, roles/iam.serviceAccoun
+          tUser (to act as
+      25  # the api/worker/push runtime SAs), roles/artifactregistry.writ
+          er,
+
+⏺ Update(.github/workflows/backend-deploy.yml)
+  ⎿  Added 15 lines, removed 5 lines
+       81  
+       82        - name: Build image and deploy to Cloud Run
+       83          working-directory: praxedo-upload-backend/deploy
+       84 +        env:                                                  
+       85 +          # Passed through env (not inline) so unset variables
+          + stay empty and are                                           
+       86 +          # appended below only when non-empty -- passing DB_U
+          +SER="" on the make                                            
+       87 +          # command line would override the Makefile default w
+          +ith an empty value.                                           
+       88 +          DB_URL: ${{ vars.DB_URL }}                          
+       89 +          DB_USER: ${{ vars.DB_USER }}                        
+       90          run: |
+       85 -          make deploy \                                       
+       86 -            PROJECT_ID="$PROJECT_ID" \                        
+       87 -            REGION="$REGION" \                                
+       88 -            IMAGE_TAG="${{ github.sha }}" \                   
+       89 -            BUCKET="${{ vars.GCS_BUCKET }}" \                 
+       91 +          args=(                                              
+       92 +            PROJECT_ID="$PROJECT_ID"                          
+       93 +            REGION="$REGION"                                  
+       94 +            IMAGE_TAG="${{ github.sha }}"                     
+       95 +            BUCKET="${{ vars.GCS_BUCKET }}"                   
+       96              UI_ORIGIN="${{ vars.UI_ORIGIN }}"
+       97 +          )                                                   
+       98 +          [ -n "$DB_URL" ]  && args+=(DB_URL="$DB_URL")       
+       99 +          [ -n "$DB_USER" ] && args+=(DB_USER="$DB_USER")     
+      100 +          make deploy "${args[@]}"                            
+⏺ Vérifions : (1) le Makefile parse et la macro s'expanse bien, (2) le garde-fou
+  déclenche réellement sur le placeholder et l'absence de valeur, (3) le
+  workflow reste du YAML valide.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Le garde-fou fonctionne : sur le placeholder, make s'arrête (Error 1) avant
+  d'appeler gcloud. Vérifions deploy-worker (structure garde + SU + gcloud) et
+  la validité du workflow.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Tout est bon. Dernière cohérence : le README backend liste aussi les variables
+  CI requises — ajoutons-y DB_URL/DB_USER.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+❯ c'est compliqué tout ça, ajoute juste DB_USER er DB_URL dans les parametres   
+  des make                                                                      
+
+⏺ Compris — je simplifie. Je remets un make deploy classique avec juste les deux
+  paramètres ajoutés inline.
+
+⏺ Update(.github/workflows/backend-deploy.yml)
+  ⎿  Added 8 lines, removed 16 lines
+       81  
+       82        - name: Build image and deploy to Cloud Run
+       83          working-directory: praxedo-upload-backend/deploy
+       84 -        env:                                                  
+       85 -          # Passed through env (not inline) so unset variables
+          - stay empty and are                                           
+       86 -          # appended below only when non-empty -- passing DB_U
+          -SER="" on the make                                            
+       87 -          # command line would override the Makefile default w
+          -ith an empty value.                                           
+       88 -          DB_URL: ${{ vars.DB_URL }}                          
+       89 -          DB_USER: ${{ vars.DB_USER }}                        
+       84          run: |
+       91 -          args=(                                              
+       92 -            PROJECT_ID="$PROJECT_ID"                          
+       93 -            REGION="$REGION"                                  
+       94 -            IMAGE_TAG="${{ github.sha }}"                     
+       95 -            BUCKET="${{ vars.GCS_BUCKET }}"                   
+       96 -            UI_ORIGIN="${{ vars.UI_ORIGIN }}"                 
+       97 -          )                                                   
+       98 -          [ -n "$DB_URL" ]  && args+=(DB_URL="$DB_URL")       
+       99 -          [ -n "$DB_USER" ] && args+=(DB_USER="$DB_USER")     
+      100 -          make deploy "${args[@]}"                            
+       85 +          make deploy \                                       
+       86 +            PROJECT_ID="$PROJECT_ID" \                        
+       87 +            REGION="$REGION" \                                
+       88 +            IMAGE_TAG="${{ github.sha }}" \                   
+       89 +            BUCKET="${{ vars.GCS_BUCKET }}" \                 
+       90 +            UI_ORIGIN="${{ vars.UI_ORIGIN }}" \               
+       91 +            DB_URL="${{ vars.DB_URL }}" \                     
+       92 +            DB_USER="${{ vars.DB_USER }}"                     
+
+⏺ Le workflow est simple maintenant. Je garde le garde-fou DB_URL du Makefile
+  (c'est justement lui qui rend cette version simple sûre : si la variable
+  GitHub DB_URL n'est pas définie, elle est passée vide et le garde-fou bloque
+  au lieu de déployer une config cassée). Je complète juste la liste des
+  variables du README pour cohérence.
+
+  Read 1 file (ctrl+o to expand)
+
+❯ sache que le host, port et db sont                                            
+  aws-0-eu-west-1.pooler.supabase.com:6543/postgres                             
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ i want in the deploy makefile of backend to have this variables to be added:  
+  DB_HOST ?=                                                                    
+  DB_PORT ?=                                                                    
+  DB_NAME ?=                                                                    
+  DB_URL           ?= jdbc:postgresql://$(DB_USER):$(DB_SECRET_NAME)@$(DB_HOST) 
+  :$(DB_PORT)/$(DB_NAME)                                                        
+                                                                                
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ continue                                                                      
+
+⏺ Avant d'écrire, je vérifie comment l'app consomme réellement
+  DB_URL/DB_USER/DB_PASSWORD (le template que tu proposes met les identifiants
+  dans l'URL, ce qui peut entrer en conflit avec le mécanisme actuel). Je
+  regarde application-gcp.yml.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+❯ and remove DB_URL from variable definition as it will be we formated          
+
+⏺ Je lis la config Flyway de l'app (le port 6543 = pooler transactionnel
+  Supabase, qui pose souvent problème à Flyway) avant d'écrire.
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Config confirmée : spring.datasource.url/username/password sont lus séparément
+  (les identifiants ne sont pas dans l'URL), et flyway.enabled: true
+  (migrations au démarrage). Deux points que je corrige/signale :
+
+  1. Je n'inline pas $(DB_USER):$(DB_SECRET_NAME)@ dans l'URL : DB_SECRET_NAME
+  est le nom du secret (pas le mot de passe), et Spring lit déjà user/password à
+  part → l'URL reste sans identifiants (avec ?sslmode=require, requis par
+  Supabase).
+  2. Le port 6543 est le pooler transactionnel (PgBouncer) : Flyway peut échouer
+  au boot. Je le mets par défaut comme demandé, mais je le signale.
+
+  J'applique : décomposition DB_HOST/DB_PORT/DB_NAME, DB_URL composée,
+  suppression du garde-fou require_db_url (devenu inutile), et retrait de DB_URL
+  des paramètres make du workflow.
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Added 11 lines, removed 3 lines
+      24  IMAGE_TAG        ?= latest
+      25  
+      26  # ---- Database: Supabase (managed Postgres, provisioned OUTSID
+          E GCP) ----
+      27 -# DB_URL = full Supabase JDBC string. Use the session pooler (:
+         -5432) or a direct                                              
+      28 -# connection for Flyway (the :6543 transaction pooler lacks som
+         -e Flyway features).                                            
+      29 -DB_URL           ?= jdbc:postgresql://REPLACE-ME.pooler.supabas
+         -e.com:5432/postgres?sslmode=require                            
+      27 +# DB_URL is composed from DB_HOST/DB_PORT/DB_NAME. Credentials 
+         +stay OUT of the URL:                                           
+      28 +# Spring reads them separately (datasource.username=DB_USER, da
+         +tasource.password=                                             
+      29 +# DB_PASSWORD); DB_USER is a plain env var and DB_PASSWORD come
+         +s from Secret Manager                                          
+      30 +# (secret name = DB_SECRET_NAME).                              
+      31 +# NOTE: :6543 is the Supabase transaction pooler (PgBouncer); i
+         +t lacks some Flyway                                            
+      32 +# features. If migrations fail at startup, switch DB_PORT to 54
+         +32 (session pooler)                                            
+      33 +# or use a direct connection.                                  
+      34 +DB_HOST          ?= aws-0-eu-west-1.pooler.supabase.com        
+      35 +DB_PORT          ?= 6543                                       
+      36 +DB_NAME          ?= postgres                                   
+      37  DB_USER          ?= postgres
+      38  DB_SECRET_NAME   ?= praxedo-db-password
+      39 +DB_URL           ?= jdbc:postgresql://$(DB_HOST):$(DB_PORT)/$(D
+         +B_NAME)?sslmode=require                                        
+      40  
+      41  # ---- GCS ----
+      42  BUCKET           ?= praxedo-files
+
+⏺ Suppression du garde-fou require_db_url (macro + appels), devenu inutile
+  puisque DB_URL a désormais des valeurs par défaut réelles.
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Removed 9 lines
+      263    #   docker push $(IMAGE_URI)
+      264  
+      265  # ------------------------------------------------------------
+           ---------
+      266 -# Guard: refuse to deploy with an unset DB_URL. The default st
+          -ill carries the                                               
+      267 -# REPLACE-ME placeholder, and an empty value (e.g. an unset CI
+          - variable passed                                              
+      268 -# as DB_URL="") is just as broken -- both would deploy a servi
+          -ce that cannot                                                
+      269 -# reach the database. Pass DB_URL=... (see deploy/README.md). 
+      270 -define require_db_url                                         
+      271 -@case "$(DB_URL)" in ""|*REPLACE-ME*) echo "ERROR: DB_URL is n
+          -ot a real Supabase JDBC URL (got: '$(DB_URL)'). Pass DB_URL=..
+          -. (see deploy/README.md)."; exit 1 ;; esac                    
+      272 -endef                                                         
+      273 -                                                              
+      274 -# ------------------------------------------------------------
+          ----------                                                     
+      266  # Both services are single-container (DB reached over TLS, no 
+           sidecar), so they
+      267  # deploy imperatively with `gcloud run deploy` -- no Knative Y
+           AML to render.
+      268  # The env values carry no commas, so the default comma-delimit
+           ed --set-env-vars
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Removed 1 line
+      269  # is safe. Cloud Run adds a default TCP startup probe on --por
+           t; we keep an
+      270  # explicit one to preserve the generous 300s startup window (S
+           pring Boot boot).
+      271  deploy-api: ## Deploy the api Cloud Run service (public, X-API
+           -Key enforced in-app).
+      272 -  $(require_db_url)                                           
+      272    # --allow-unauthenticated makes the endpoint public (grants 
+           allUsers the
+      273    # run.invoker role); the app still enforces the X-API-Key he
+           ader itself.
+      274    gcloud run deploy $(API_SERVICE) \
+
+⏺ Update(praxedo-upload-backend/deploy/Makefile)
+  ⎿  Removed 1 line
+      283      --set-secrets=DB_PASSWORD=$(DB_SECRET_NAME):latest
+      284  
+      285  deploy-worker: ## Deploy the worker Cloud Run service (calls t
+           he private scanner).
+      286 -  $(require_db_url)                                           
+      286    # The worker resolves SCANNER_URL from the deployed scanner:
+            fail early if it
+      287    # is missing. Private service (--no-allow-unauthenticated); 
+           only the push SA
+      288    # is later granted run.invoker, by `make pubsub-push`.
+
+⏺ Maintenant le workflow : retrait de DB_URL des paramètres make, et mise à jour
+  de l'en-tête.
+⏺ Update(.github/workflows/backend-deploy.yml)
+  ⎿  Removed 1 line
+      88              IMAGE_TAG="${{ github.sha }}" \
+      89              BUCKET="${{ vars.GCS_BUCKET }}" \
+      90              UI_ORIGIN="${{ vars.UI_ORIGIN }}" \
+      91 -            DB_URL="${{ vars.DB_URL }}" \                      
+      91              DB_USER="${{ vars.DB_USER }}"
+
+⏺ Update(.github/workflows/backend-deploy.yml)
+  ⎿  Added 6 lines, removed 6 lines
+      14  #     GCP_REGION         e.g. europe-west1
+      15  #     GCS_BUCKET         e.g. my-gcp-project-praxedo-files
+      16  #     UI_ORIGIN          e.g. https://app.example.com
+      17 -#     DB_URL             Supabase JDBC string, e.g.            
+      18 -#                        jdbc:postgresql://<ref>.pooler.supabas
+         -e.com:5432/postgres?sslmode=require                            
+      19 -#     DB_USER            (optional) Supabase user; the pooler u
+         -ser is usually                                                 
+      20 -#                        postgres.<project-ref>. Defaults to "p
+         -ostgres" if unset.                                             
+      21 -#   NOTE: DB_PASSWORD is NOT set here -- it is read from Secret
+         - Manager at runtime                                            
+      22 -#   (stored once by `DB_PASSWORD=... make infra`).             
+      17 +#     DB_USER            Supabase user (the pooler user is usua
+         +lly                                                            
+      18 +#                        postgres.<project-ref>). Defaults to "
+         +postgres" if unset.                                            
+      19 +#   NOTE: the DB host/port/name default to the Supabase pooler 
+         +in deploy/Makefile                                             
+      20 +#   (DB_HOST/DB_PORT/DB_NAME); DB_URL is composed from them. DB
+         +_PASSWORD is NOT set                                           
+      21 +#   here -- it is read from Secret Manager at runtime (stored o
+         +nce by                                                         
+      22 +#   `DB_PASSWORD=... make infra`).                             
+      23  #
+      24  # The deploy SA needs: roles/run.admin, roles/iam.serviceAccoun
+          tUser (to act as
+      25  # the api/worker/push runtime SAs), roles/artifactregistry.writ
+          er,
+
+⏺ Vérification finale : composition de DB_URL, absence de tout reste du
+  garde-fou, et validité du workflow.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Tout est bon côté Makefile (URL composée, recomposition sur override DB_PORT,
+  plus aucun garde-fou). Le check YAML a juste échoué à cause du répertoire
+  courant — je le relance depuis la racine.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ C'est fait et vérifié.
+
+  Résultat
+
+  praxedo-upload-backend/deploy/Makefile — bloc DB décomposé :
+  DB_HOST          ?= aws-0-eu-west-1.pooler.supabase.com
+  DB_PORT          ?= 6543
+  DB_NAME          ?= postgres
+  DB_USER          ?= postgres
+  DB_SECRET_NAME   ?= praxedo-db-password
+  DB_URL           ?=
+  jdbc:postgresql://$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=require
+  - DB_URL par défaut → jdbc:postgresql://aws-0-eu-west-1.pooler.supabase.com:65
+  43/postgres?sslmode=require (vérifié).
+  - Surcharger un composant recompose l'URL (ex. DB_PORT=5432 → URL en :5432,
+  vérifié).
+  - Garde-fou require_db_url supprimé (plus de placeholder REPLACE-ME).
+
+  .github/workflows/backend-deploy.yml — DB_URL retiré des paramètres make
+  (composé côté Makefile) ; DB_USER conservé ; en-tête mis à jour.
+
+  Deux points que j'ai tranchés (dis-moi si tu veux autrement)
+
+  1. Pas d'identifiants dans l'URL. Ton modèle mettait
+  $(DB_USER):$(DB_SECRET_NAME)@ dans l'URL, mais DB_SECRET_NAME = nom du secret
+  (praxedo-db-password), pas le mot de passe — et Spring lit déjà
+  username/password séparément (application-gcp.yml), le password venant de
+  Secret Manager. J'ai donc gardé l'URL sans identifiants + ?sslmode=require
+  (obligatoire chez Supabase). Si tu veux vraiment la forme user:pass@, il
+  faudrait injecter le vrai mot de passe (pas le nom du secret) et retirer le
+  mécanisme séparé — dis-le et je le fais.
+  2. Port 6543 = pooler transactionnel (PgBouncer). flyway.enabled: true : les
+  migrations tournent au démarrage, et le pooler transactionnel casse souvent
+  Flyway. Je l'ai mis par défaut comme demandé, avec un commentaire d'alerte. Si
+  le boot échoue sur Flyway → passe DB_PORT=5432 (pooler session) ou connexion
+  directe.
+
+  Rappel : DB_USER du pooler Supabase est en général postgres.<project-ref> — à
+  définir en variable GitHub DB_USER (sinon défaut postgres, qui ne conviendra
+  pas au pooler).
+
+✻ Worked for 4m 46s
+
+※ recap: Objectif : migrer les déploiements Cloud Run de YAML Knative vers `gcloud run deploy`, avec décomposition DB (DB_HOST/DB_PORT/DB_NAME) dans le Makefile backend. Tout est fait et vérifié. Prochaine action : créer une branche et commit, si tu valides.
+
+❯ commit et push dans une branche puis PR                                       
+
+⏺ Je prépare la branche + PR. D'abord j'inspecte l'état git précis pour ne
+  committer que les fichiers de cette tâche (et pas les changements
+  pré-existants comme ui-deploy.yml ou pnpm-lock.yaml).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ L'état git est plus complexe que prévu : je suis sur la branche
+  task/ui-deploy-node22, il n'y a pas de branche develop, et le working tree
+  mélange mes changements avec d'autres modifs non liées (suppressions
+  docs/superpowers, architecture.html, pnpm-lock…). Je dois isoler proprement.
+  Je vérifie d'abord la relation avec main.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ HEAD est exactement à origin/main (0 commit d'avance) — la branche
+  task/ui-deploy-node22 n'a rien committé, tout est en working tree. Donc je
+  peux créer une branche propre depuis ici : elle sera basée sur main. Comme il
+  n'y a pas de develop, la PR ciblera main.
+
+  Je crée la branche, je stage uniquement mes 9 fichiers, et je vérifie avant de
+  committer.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Parfait : l'index contient exactement mes 9 fichiers (6 modifiés + 3
+  supprimés), et les modifs non liées restent hors commit. Je rédige le message
+  de commit (ASCII, comme l'exige le validateur) et je committe.
+
+  Made 1 scratchpad edit +20, committed 27de1ef (ctrl+o to expand)
+
+⏺ Commit créé (9 fichiers, uniquement ma tâche). Mon commit 27de1ef est basé sur
+  origin/main, donc la PR ne contiendra que ce commit. Je rédige la description
+  (français, via --body-file pour préserver les accents), puis push + PR.
+
+  Made 1 scratchpad edit +32, pushed to task/deploy-gcloud-run, created PR #8 (ctrl+o to expand)
+
+⏺ PR créée : https://github.com/soulemantraore/praxedo-upload/pull/8
+
+  Vérifions rapidement que la PR ne contient bien que ma tâche (base main, 1
+  commit, 9 fichiers).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ C'est fait. ✅
+
+  PR #8 ouverte
+
+  https://github.com/soulemantraore/praxedo-upload/pull/8
+
+  - Branche : task/deploy-gcloud-run (poussée sur origin)
+  - Base : main — ⚠️ il n'existe pas de branche develop dans le dépôt
+  (contrairement à ce que dit le CLAUDE.md), donc j'ai ciblé main, comme les
+  autres branches task/*. Dis-moi si tu veux plutôt créer/cibler develop.
+  - 1 commit, 9 fichiers — exactement le périmètre de la tâche (refactor gcloud 
+  run deploy des 3 services + décomposition DB_URL).
+
+  Isolation propre
+
+  Les modifications non liées présentes dans le working tree (suppressions
+  docs/superpowers/**, praxedo-upload-backend/docs/architecture.html,
+  praxedo-upload-ui/pnpm-lock.yaml, dossier superpowers/ non suivi) ont été
+  laissées hors du commit — elles restent dans ton working tree, intactes.
+
+  Un détail à noter : tu étais sur la branche task/ui-deploy-node22 (dont le
+  commit ci(ui): bump ... Node 20 -> 22 est déjà sur main) ; ma nouvelle branche
+  part de ce même point, donc la PR ne montre que mon commit. Après fusion,
+  pense à git branch -D task/deploy-gcloud-run pour nettoyer.
+
+✻ Churned for 4m 7s
+
+※ recap: Objectif : migrer le déploiement Cloud Run de manifestes Knative vers des commandes gcloud run deploy pour les trois services, avec DB_URL composée depuis DB_HOST/PORT/NAME. La PR #8 est ouverte vers main. Prochaine action : attendre ta revue ou fusion.
